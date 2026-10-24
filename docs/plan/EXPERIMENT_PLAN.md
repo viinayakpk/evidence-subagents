@@ -364,6 +364,7 @@ MS-Eval (Oct 2026) pairs each sub-agent run with a single-agent run on the same 
 - **Audit budget:** per sub-agent return, `max(1, round_half_up(r × claims))` claims, capped at the number of claims: every return with a claim gets at least one L2/L3 audit when r > 0 (fixed 2026-10-24, before the pilot). The risk and random arms use the same budget.
 - **Risk-based sampler:** Features: used by a later write or the deliverable; derived or action_done; numeric; sub-agent hit limits, had errors or finished very fast; low confidence; failed L0/L1. Random sampler at equal budget is the control.
 - **On failure:** Reject, re-delegate once naming the failed claim, then the main agent does the sub-task.
+- **Sub-agent sessions:** in every delegating arm each sub-agent keeps one conversation per run; every call (main agent or harness re-delegation) continues it, so retries carry the same context in every arm (fixed 2026-10-24, before the pilot).
 
 <a id="experiments"></a>
 

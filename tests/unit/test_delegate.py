@@ -159,3 +159,106 @@ async def test_a_failing_sub_agent_run_is_traced(tmp_path) -> None:
     assert len(errors) == 1
     assert errors[0]["subagent"] == "researcher" and errors[0]["error_type"] == "UnexpectedModelCall"
     assert events[-1]["type"] == "run_end"
+
+
+def _typed_return(marker: str) -> str:
+    return json.dumps(
+        {
+            "subagent_id": "researcher",
+            "status": "complete",
+            "claims": [{"claim_id": "c1", "text": marker, "kind": "fact", "value": marker, "evidence": []}],
+            "open_issues": [],
+        }
+    )
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("arm_name", ["vanilla_mad", "self_verify", "typed"])
+async def test_every_delegating_arm_keeps_one_conversation_per_sub_agent(arm_name: str, monkeypatch) -> None:
+    """Owner decision 3: a second call to a sub-agent (a retry or a new step) continues its conversation in every arm."""
+    from evcarry.harness import agents as agents_module
+    from evcarry.harness.arms import arm_spec
+    from evcarry.harness.hooks import LedgerHooks
+    from evcarry.harness.run_settings import harness_run_config
+    from evcarry.harness.tools import fixture_toolset
+    from evcarry.providers.registry import load_models
+    from evcarry.providers.usage import PriceTable
+
+    spec = arm_spec(arm_name)
+    reply = _typed_return if spec.schema else (lambda marker: marker)
+    models: dict[str, _InputsModel] = {}
+
+    def scripted(config, script, task, agent_name):
+        if agent_name == "main":
+            steps = [
+                ScriptStep(tool="researcher", arguments={"input": "FIRST: count the sections"}, call_id="m1"),
+                ScriptStep(tool="researcher", arguments={"input": "SECOND: check that count again"}, call_id="m2"),
+                ScriptStep(content="done"),
+            ]
+        else:
+            steps = [ScriptStep(content=reply("first-reply-14")), ScriptStep(content=reply("second-reply-14"))]
+        models[agent_name] = _InputsModel(steps)
+        return models[agent_name]
+
+    monkeypatch.setattr(agents_module, "_model", scripted)
+    ledger, writer = Ledger(), _Events()
+    toolset = fixture_toolset(None, ledger)
+    hooks = LedgerHooks(ledger, writer, PriceTable(0, 0, 0, peak_multiplier=1), toolset.catalog)
+    main = agents_module.build_main_agent(
+        arm=spec, task="t", seed=1, prompts_dir="prompts/v1", model_config=load_models()["mock"], script=None,
+        toolset=toolset, hooks=hooks, writer=writer, ledger=ledger, checks=(), sampler=None, rate=0.0,
+        injector=None, max_turns=5,
+    )
+    await Runner.run(main, "Solve the task.", hooks=hooks, max_turns=5, run_config=harness_run_config())
+    first, second = models["researcher"].inputs
+    assert "SECOND" not in first
+    assert second.count("FIRST: count the sections") == 1  # the history once, not repeated
+    assert "first-reply-14" in second and "SECOND: check that count again" in second
+    assert models["operator"].inputs == []  # never called: its own conversation is untouched
+
+
+async def test_redelegation_with_a_session_continues_it_without_repeating_the_history() -> None:
+    from evcarry.harness.sessions import SubagentSession
+
+    model = _InputsModel([ScriptStep(content=_return(11)), ScriptStep(content=_return(14))])
+    agent = Agent(name="researcher", instructions="You are the researcher.", model=model)
+    session = SubagentSession("t|1|researcher")
+    writer = _Events()
+    first = await Runner.run(agent, INSTRUCTION, session=session)
+    extractor = make_extractor(
+        agent=agent, hooks=None, writer=writer, ledger=_ledger(), caller=None, task="t", seed=1, arm="evidence",
+        checks=("L0", "L1"), sampler=None, rate=0.0, require_evidence=True, injector=None, state=DelegateState(),
+        max_turns=5, session=session,
+    )
+    accepted = await extractor(first)
+    assert json.loads(accepted)["claims"][0]["value"] == 14
+    second_input = model.inputs[1]
+    assert second_input.count(INSTRUCTION) == 1
+    assert "paper-A has 11 sections" in second_input and "Your previous return was rejected" in second_input
+    # The session keeps both attempts, so the main agent's next call to this sub-agent sees them.
+    kept = _input_text(await session.get_items())
+    assert "paper-A has 11 sections" in kept and "paper-A has 14 sections" in kept
+
+
+async def test_calls_to_one_sub_agent_run_one_at_a_time() -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from evcarry.harness.sessions import serialized
+
+    running, peak, order = 0, 0, []
+
+    async def invoke(_context, arguments):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0.01)
+        order.append(arguments)
+        running -= 1
+        return arguments
+
+    tool = serialized(SimpleNamespace(on_invoke_tool=invoke))
+    await asyncio.gather(*(tool.on_invoke_tool(None, f"call-{i}") for i in range(4)))
+    assert peak == 1 and order == ["call-0", "call-1", "call-2", "call-3"]

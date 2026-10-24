@@ -2,8 +2,10 @@
 
 The first nested run is the ``as_tool`` invocation. This extractor reviews that
 result. On ``redelegate`` it calls ``Runner.run`` once more on the same agent,
-continuing that run's conversation with the feedback (and, for the scripted
-model, its queue). There is no third attempt.
+continuing the sub-agent's conversation with the feedback (and, for the scripted
+model, its queue). There is no third attempt. In a run the conversation is the
+sub-agent's persistent session (``harness.sessions``), the same one the main
+agent's later calls continue.
 
 Strict ``output_type`` rejects invalid JSON inside the SDK before this
 extractor runs. The one-repair guarantee for a string return lives here and in
@@ -42,17 +44,25 @@ def _as_text(output: object) -> str:
     return json.dumps(output, default=str)
 
 
-def _continued(run_result: Any, message: str) -> list[Any]:
+def _continued(run_result: Any, message: str, session: Any = None) -> str | list[Any]:
     """The sub-agent's own conversation (instruction, tool calls, reply) plus one new user message.
 
-    A repair or re-delegation that sends only ``message`` starts a fresh run in which
-    the sub-agent no longer knows what it was asked to do.
+    A repair or re-delegation that sends only ``message`` without the conversation starts a
+    fresh run in which the sub-agent no longer knows what it was asked to do. With a session,
+    ``Runner.run`` puts the stored conversation in front of ``message`` itself.
     """
+    if session is not None:
+        return message
     return [*run_result.to_input_list(), {"role": "user", "content": message}]
 
 
 async def _coerce(
-    run_result: Any, agent: Any, hooks: LedgerHooks, max_turns: int, prompts_dir: str | None = None
+    run_result: Any,
+    agent: Any,
+    hooks: LedgerHooks,
+    max_turns: int,
+    prompts_dir: str | None = None,
+    session: Any = None,
 ) -> tuple[SubagentReturn, Any]:
     """The parsed return and the run it came from (the repair run when one was needed)."""
     output = run_result.final_output
@@ -65,10 +75,11 @@ async def _coerce(
     except FailedReturn as first:
         repaired = await Runner.run(
             agent,
-            _continued(run_result, repair_prompt(prompts_dir, str(first))),
+            _continued(run_result, repair_prompt(prompts_dir, str(first)), session),
             hooks=hooks,
             max_turns=max_turns,
             run_config=harness_run_config(),
+            session=session,
         )
         parsed, _repairs = parse_subagent_return(_as_text(repaired.final_output))
         return parsed, repaired
@@ -93,9 +104,10 @@ def make_extractor(
     max_turns: int,
     judge: Any = None,
     prompts_dir: str | None = None,
+    session: Any = None,
 ):
     async def _review(run_result: Any, prior: int) -> str:
-        payload, run_result = await _coerce(run_result, agent, hooks, max_turns, prompts_dir)
+        payload, run_result = await _coerce(run_result, agent, hooks, max_turns, prompts_dir, session)
         index = state.return_index
         state.return_index += 1
         decision_inject = None
@@ -157,10 +169,11 @@ def make_extractor(
         if policy.action == "redelegate":
             second = await Runner.run(
                 agent,
-                _continued(run_result, feedback_message(policy)),
+                _continued(run_result, feedback_message(policy), session),
                 hooks=hooks,
                 max_turns=max_turns,
                 run_config=harness_run_config(),
+                session=session,
             )
             return await _review(second, prior=1)
         if policy.action == "fallback":

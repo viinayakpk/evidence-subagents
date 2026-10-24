@@ -13,6 +13,7 @@ from evcarry.harness.delegate import DelegateState, make_extractor
 from evcarry.harness.hooks import LedgerHooks
 from evcarry.harness.prompts import SUBAGENT_TOOL_DESCRIPTIONS, prompt_text, subagent_instructions
 from evcarry.harness.run_settings import agent_model_settings, harness_run_config
+from evcarry.harness.sessions import SubagentSession, serialized
 from evcarry.harness.tools import Toolset, build_tools
 from evcarry.inject.injector import FaultInjector
 from evcarry.protocol.schema import SubagentReturn
@@ -116,6 +117,9 @@ def build_main_agent(
             model_settings=agent_model_settings(),
             output_type=typed_output,
         )
+        # One conversation per sub-agent for the whole run, in every delegating arm: each call from
+        # the main agent, and the harness's repair and re-delegation, continue it.
+        session = SubagentSession(f"{task}|{seed}|{name}")
         extractor = None
         if arm.schema:
             extractor = make_extractor(
@@ -136,9 +140,10 @@ def build_main_agent(
                 max_turns=max_turns,
                 judge=judge,
                 prompts_dir=prompts_dir,
+                session=session,
             )
         sub_tools.append(
-            sub.as_tool(
+            serialized(sub.as_tool(
                 tool_name=name,
                 tool_description=SUBAGENT_TOOL_DESCRIPTIONS[name],
                 custom_output_extractor=extractor,
@@ -146,8 +151,9 @@ def build_main_agent(
                 # The SDK default is 10 turns per nested run, far below a gym task's budget.
                 max_turns=max_turns,
                 run_config=harness_run_config(),
+                session=session,
                 failure_error_function=_logged_failure(writer, name),
-            )
+            ))
         )
     ordered = sorted(sub_tools, key=lambda tool: tool.name) + build_tools(toolset.main_extra, caller, toolset)
     return Agent(
