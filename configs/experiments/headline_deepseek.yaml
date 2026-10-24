@@ -11,7 +11,7 @@ judge_model: openrouter_ds_1017
 limits: {max_steps: 100, max_seconds: 7200, context: 131072}
 prompts: prompts/gym_v1
 require_frozen_prompts: true
-budget: {cap_usd: 80, schedule: offpeak_only}
+budget: {cap_usd: 45, schedule: offpeak_only}  # owner ceiling: $50 total with the $5 pilot
 parallel_tasks: 8
 out: runs/headline_deepseek_v1
 environment: docker
