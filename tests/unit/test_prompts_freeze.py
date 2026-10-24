@@ -122,3 +122,13 @@ async def test_require_frozen_prompts_refuses_an_unfrozen_set(tmp_path: Path) ->
     mock.require_frozen_prompts = True
     with pytest.raises(FrozenInputMismatch, match="requires a frozen prompt set"):
         await run_experiment(mock, out_dir=tmp_path / "out")
+
+
+def test_every_return_format_asks_for_the_same_completeness() -> None:
+    """Only the JSON formats asked for every list item and for what could not be done; vanilla was told to be short."""
+    formats = {arm: subagent_instructions(GYM, "researcher", arm) for arm in ("vanilla_mad", "self_verify", "typed", "evidence_risk")}
+    for arm, text in formats.items():
+        assert "exactly as they appear" in text, arm
+        assert "include every item" in text, arm
+        assert "could not do" in text, arm
+        assert "short plain-text" not in text and "short report" not in text, arm
