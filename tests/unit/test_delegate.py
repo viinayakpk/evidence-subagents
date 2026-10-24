@@ -98,3 +98,45 @@ async def test_repair_continues_the_conversation_and_fences_cost_no_repair() -> 
     assert [event["action"] for event in writer.events if event["type"] == "policy"] == ["accept"]
     parsed, repairs = parse_subagent_return(_return(14, fenced=True))
     assert repairs == 0 and parsed.claims[0].value == 14
+
+
+async def test_a_corruption_that_does_not_fit_is_skipped_not_fatal() -> None:
+    from types import SimpleNamespace
+
+    from evcarry.inject.injector import FaultInjector
+    from evcarry.protocol.schema import SubagentReturn
+
+    payload = SubagentReturn.model_validate_json(_return(14))
+    payload.claims[0].text = "paper-A lists its sections"  # nothing for numeric_perturbation to change
+    payload.claims[0].value = None
+    writer = _Events()
+    extractor = make_extractor(
+        agent=None, hooks=None, writer=writer, ledger=_ledger(), caller=None, task="t", seed=1, arm="evidence",
+        checks=("L0", "L1"), sampler=None, rate=0.0, require_evidence=True,
+        injector=FaultInjector(probability=1, types=("numeric_perturbation",)), state=DelegateState(), max_turns=5,
+    )
+    accepted = await extractor(SimpleNamespace(final_output=payload))
+    assert json.loads(accepted)["claims"][0]["text"] == "paper-A lists its sections"
+    injection = next(event for event in writer.events if event["type"] == "injection")
+    assert injection["applied"] is False and "number" in injection["reason"]
+    assert [event["action"] for event in writer.events if event["type"] == "policy"] == ["accept"]
+
+
+async def test_a_failing_sub_agent_run_is_traced(tmp_path) -> None:
+    from evcarry.runs.config import load_experiment
+    from evcarry.runs.manager import run_experiment
+    from evcarry.trace.writer import read_events
+
+    script = json.loads(open("tests/fixtures/scripts/vanilla_mad.json", encoding="utf-8").read())
+    script["tasks"]["fixture-sections"]["agents"]["researcher"] = []  # the nested run has no step: it raises
+    override = tmp_path / "vanilla_broken.json"
+    override.write_text(json.dumps(script), encoding="utf-8")
+    config = load_experiment("configs/experiments/mock_e2e.yaml")
+    config.arms = ["vanilla_mad"]
+    config.tasks = "tests/fixtures/tasks/one_sections.txt"
+    await run_experiment(config, out_dir=tmp_path / "out", script_overrides={"vanilla_mad": override})
+    events = read_events(next((tmp_path / "out").glob("*.jsonl")))
+    errors = [event for event in events if event["type"] == "subagent_error"]
+    assert len(errors) == 1
+    assert errors[0]["subagent"] == "researcher" and errors[0]["error_type"] == "UnexpectedModelCall"
+    assert events[-1]["type"] == "run_end"

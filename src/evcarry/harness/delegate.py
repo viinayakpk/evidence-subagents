@@ -18,6 +18,7 @@ from typing import Any
 from agents import RunConfig, Runner
 
 from evcarry.harness.hooks import LedgerHooks
+from evcarry.inject.corruptions import CorruptionError
 from evcarry.inject.injector import FaultInjector
 from evcarry.protocol.audit import audit_return
 from evcarry.protocol.judge import LexicalJudge
@@ -105,8 +106,17 @@ def make_extractor(
                 claims=payload.claims,
             )
             if decision_inject is not None:
-                payload = injector.apply(payload, decision_inject, ledger)
-                writer.write({"type": "injection", "arm": arm, **decision_inject.as_dict()})
+                # A corruption that does not fit the chosen claim (no number to perturb, no
+                # second call to point at) is skipped and logged; raising here threw away
+                # the sub-agent's whole return.
+                try:
+                    payload = injector.apply(payload, decision_inject, ledger)
+                except CorruptionError as exc:
+                    writer.write(
+                        {"type": "injection", "arm": arm, **decision_inject.as_dict(), "applied": False, "reason": str(exc)}
+                    )
+                else:
+                    writer.write({"type": "injection", "arm": arm, **decision_inject.as_dict(), "applied": True})
         report = await audit_return(
             payload,
             ledger=ledger,

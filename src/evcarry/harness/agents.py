@@ -6,6 +6,7 @@ from typing import Any
 
 from agents import Agent, RunConfig
 from agents.agent import StopAtTools
+from agents.tool import default_tool_error_function
 
 from evcarry.harness.arms import ArmSpec
 from evcarry.harness.delegate import DelegateState, make_extractor
@@ -50,6 +51,23 @@ def _model(
         usage=usage,
         agent_name=agent_name,
     )
+
+
+def _logged_failure(writer: JsonlWriter, name: str):
+    """``as_tool`` failure handler: trace the error, then send the SDK's default text to the model.
+
+    Without it an exception in a sub-agent run (provider error, turn limit, a
+    return still invalid after its repair, a failed replay) reaches the main
+    agent as a generic tool error and leaves nothing in the trace.
+    """
+
+    def handle(ctx: Any, error: Exception) -> str:
+        writer.write(
+            {"type": "subagent_error", "subagent": name, "error_type": type(error).__name__, "error": str(error)[:2000]}
+        )
+        return default_tool_error_function(ctx, error)
+
+    return handle
 
 
 def build_main_agent(
@@ -127,6 +145,7 @@ def build_main_agent(
                 # The SDK default is 10 turns per nested run, far below a gym task's budget.
                 max_turns=max_turns,
                 run_config=RunConfig(tracing_disabled=True),
+                failure_error_function=_logged_failure(writer, name),
             )
         )
     ordered = sorted(sub_tools, key=lambda tool: tool.name) + build_tools(toolset.main_extra, caller, toolset)
