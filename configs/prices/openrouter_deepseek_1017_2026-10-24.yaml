@@ -3,12 +3,27 @@ example_only: false
 peak_multiplier: 1
 weekdays_only: true
 peak_windows_utc: []
-per_million_tokens:
-  input_cache_miss: 0.098
-  input_cache_hit: 0.00294
-  output: 0.294
+# USD per million tokens, one row per endpoint tag in openrouter_ds_1017's routing.
+# A call is priced at the row of the provider that served it (both InferenceNet rows
+# answer "InferenceNet"); an unobserved or unknown provider at the larger rate of
+# each component. The counted cost is the larger of that and OpenRouter's usage.cost.
+endpoints:
+  deepinfra/fp8:
+    input_cache_miss: 0.098
+    input_cache_hit: 0.00294
+    output: 0.294
+  inference-net/fp8:
+    input_cache_miss: 0.08
+    input_cache_hit: 0.008
+    output: 0.50
+  inference-net/us:
+    input_cache_miss: 0.08
+    input_cache_hit: 0.008
+    output: 0.50
 note: >
-  OpenRouter endpoint prices for deepseek/deepseek-v4.1-flash-1017 on the
-  DeepInfra FP8 endpoint (deepinfra/fp8), read from the OpenRouter endpoints API on 2026-10-24.
-  Budget estimate only; provider_reported_cost_usd from OpenRouter is the
-  billed number.
+  OpenRouter endpoint prices for deepseek/deepseek-v4.1-flash-1017, read from
+  https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash-1017/endpoints
+  on 2026-10-24 (docs/evidence/openrouter_endpoints_deepseek-v4.1-flash-1017_2026-10-24b.json).
+  All three are fp8, standard tier. InferenceNet is cheaper per input token but its
+  cache read is 2.7x DeepInfra's and its output 1.7x, so for this cache-heavy workload
+  it is the more expensive endpoint.

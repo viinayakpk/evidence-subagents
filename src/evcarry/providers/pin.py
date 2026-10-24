@@ -1,13 +1,18 @@
-"""Fail a run whose OpenRouter call was served by a provider other than the pinned one.
+"""Fail a run whose OpenRouter call was served by an endpoint outside the pinned set.
 
-A model entry pins its provider when its routing has ``allow_fallbacks: false``
-and an ``only`` or ``order`` list of endpoint tags (``deepinfra/fp8``). The
-first tag segment is the provider slug; it is compared with the provider names
-in the response (``DeepInfra``) after lower-casing and dropping everything but
-letters and digits, so ``inference-net`` matches ``InferenceNet``. A
-quantization segment (``fp8``) is compared with an observed quantization, and
-a ``flex`` / ``priority`` segment with the response's ``service_tier``; neither
-is in OpenRouter's responses today, so in practice the provider name decides.
+A model entry pins its endpoints when its routing has ``allow_fallbacks: false``
+and an ``only`` (else ``order``) list of endpoint tags (``deepinfra/fp8``,
+``inference-net/us``). The first tag segment is the provider slug; it is
+compared with the provider names in the response (``DeepInfra``) after
+lower-casing and dropping everything but letters and digits, so
+``inference-net`` matches ``InferenceNet``. A quantization segment (``fp8``) is
+compared with an observed quantization, and a ``flex`` / ``priority`` segment
+with the response's ``service_tier`` (a tag without one is the ``default``
+tier); other segments (a region such as ``us``) are not observable. A
+``quantizations`` list in the routing binds every tag. A call passes when one
+tag of the set matches its provider, quantization and tier.
+OpenRouter's responses carry no quantization today, so in practice the
+provider name and the tier decide.
 
 A call whose provider cannot be observed passes (``ok: null``) and is logged as
 unobserved. The check runs on every call: ``llm_call`` and ``judge_call`` record
@@ -39,11 +44,42 @@ def provider_slug(name: str) -> str:
 
 
 @dataclass(frozen=True)
+class Endpoint:
+    tag: str
+    provider: str
+    quantization: str | None
+    # A tag without a tier segment is the provider's default tier.
+    tier: str
+
+    @classmethod
+    def from_tag(cls, tag: str) -> Endpoint:
+        segments = tag.lower().split("/")
+        return cls(
+            tag=tag,
+            provider=provider_slug(segments[0]),
+            quantization=next((s for s in segments[1:] if s in _QUANTIZATIONS), None),
+            tier=next((s for s in segments[1:] if s in _TIERS), "default"),
+        )
+
+
+@dataclass(frozen=True)
 class Pin:
     tags: tuple[str, ...]
-    providers: frozenset[str]
-    quantizations: frozenset[str]
-    tiers: frozenset[str]
+    endpoints: tuple[Endpoint, ...]
+    # The routing's ``quantizations`` filter (OpenRouter's own): binds every tag, with or without a quantization segment.
+    required_quantizations: frozenset[str] = frozenset()
+
+    @property
+    def providers(self) -> frozenset[str]:
+        return frozenset(endpoint.provider for endpoint in self.endpoints)
+
+    @property
+    def quantizations(self) -> frozenset[str]:
+        return frozenset(endpoint.quantization for endpoint in self.endpoints if endpoint.quantization)
+
+    @property
+    def tiers(self) -> frozenset[str]:
+        return frozenset(endpoint.tier for endpoint in self.endpoints)
 
 
 def pin_from_routing(routing: dict[str, Any] | None) -> Pin | None:
@@ -54,14 +90,8 @@ def pin_from_routing(routing: dict[str, Any] | None) -> Pin | None:
     if not tags:
         return None
     tags = tuple(str(tag) for tag in tags)
-    parts = [tag.lower().split("/") for tag in tags]
-    return Pin(
-        tags=tags,
-        providers=frozenset(provider_slug(segments[0]) for segments in parts),
-        quantizations=frozenset(s for segments in parts for s in segments[1:] if s in _QUANTIZATIONS),
-        # A tag without a tier segment is the provider's default tier.
-        tiers=frozenset(next((s for s in segments[1:] if s in _TIERS), "default") for segments in parts),
-    )
+    required = frozenset(str(item).lower() for item in routing.get("quantizations") or ())
+    return Pin(tags=tags, endpoints=tuple(Endpoint.from_tag(tag) for tag in tags), required_quantizations=required)
 
 
 @dataclass(frozen=True)
@@ -91,10 +121,16 @@ def check_pin(identity: ServedIdentity, routing: dict[str, Any] | None) -> PinCh
     wrong = [name for name in names if provider_slug(name) not in pin.providers]
     if wrong:
         return PinCheck(False, pin.tags, observed, f"served by {wrong[0]}, pinned to {list(pin.tags)}")
-    if pin.quantizations and identity.quantization and identity.quantization.lower() not in pin.quantizations:
-        return PinCheck(False, pin.tags, observed, f"quantization {identity.quantization}, pinned to {list(pin.tags)}")
+    # The tags of the provider(s) the response names; one must match the call's quantization and tier.
+    slugs = {provider_slug(name) for name in names}
+    candidates = [endpoint for endpoint in pin.endpoints if endpoint.provider in slugs]
+    quantization = (identity.quantization or "").lower()
+    if quantization:
+        candidates = [endpoint for endpoint in candidates if endpoint.quantization in (None, quantization)]
+        if not candidates or (pin.required_quantizations and quantization not in pin.required_quantizations):
+            return PinCheck(False, pin.tags, observed, f"quantization {identity.quantization}, pinned to {list(pin.tags)}")
     tier = (identity.service_tier or "").lower()
-    if tier in _TIERS | {"default"} and tier not in pin.tiers:
+    if tier in _TIERS | {"default"} and not any(endpoint.tier == tier for endpoint in candidates):
         return PinCheck(False, pin.tags, observed, f"service tier {identity.service_tier}, pinned to {list(pin.tags)}")
     return PinCheck(True, pin.tags, observed, "")
 

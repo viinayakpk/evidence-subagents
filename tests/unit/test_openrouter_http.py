@@ -208,7 +208,9 @@ async def test_the_pinned_route_asks_for_the_standard_service_tier() -> None:
     routing = load_models()["openrouter_ds_1017"].routing
     body = routing_extra_body(routing)
     assert body["service_tier"] == "default"
-    assert "service_tier" not in body["provider"] and body["provider"]["order"] == ["deepinfra/fp8"]
+    endpoint_set = ["deepinfra/fp8", "inference-net/fp8", "inference-net/us"]
+    assert "service_tier" not in body["provider"]
+    assert body["provider"]["order"] == endpoint_set and body["provider"]["only"] == endpoint_set
     assert pin_from_routing(routing).tiers == frozenset({"default"})  # what the pin check accepts
     assert routing_extra_body({"order": ["deepseek"]}) == {"provider": {"order": ["deepseek"]}}
 

@@ -51,9 +51,11 @@ free_debug:
   billable: false
   prices: configs/prices/local_zero.yaml
 openrouter_ds_1017:
-  # DeepSeek V4.1 Flash 1017 via OpenRouter, pinned to DeepInfra's FP8 endpoint
+  # DeepSeek V4.1 Flash 1017 via OpenRouter, pinned to a fixed set of FP8 endpoints, standard tier
   # (DeepSeek's own endpoint is blocked by the account's training-data privacy setting).
-  # Slug and prices checked on OpenRouter 2026-10-24.
+  # DeepInfra first; OpenRouter moves a call to the next tag when one answers 429. A call served by
+  # any endpoint outside the set fails the run. Slug and prices checked on OpenRouter 2026-10-24;
+  # each endpoint served a tool call (docs/evidence/endpoint_probe_2026-10-24.json).
   kind: openrouter
   base_url: https://openrouter.ai/api/v1
   model: deepseek/deepseek-v4.1-flash-1017
@@ -64,7 +66,10 @@ openrouter_ds_1017:
   prices: configs/prices/openrouter_deepseek_1017_2026-10-24.yaml
   json_schema_outputs: false
   routing:
-    order: [deepinfra/fp8]
+    only: [deepinfra/fp8, inference-net/fp8, inference-net/us]
+    order: [deepinfra/fp8, inference-net/fp8, inference-net/us]
+    # inference-net/us has no fp8 segment in its tag; this filter keeps it (and the pin check) fp8.
+    quantizations: [fp8]
     allow_fallbacks: false
     require_parameters: true
     # Sent as the top-level service_tier. Without it OpenRouter let deepinfra/fp8/priority (1.5x price)

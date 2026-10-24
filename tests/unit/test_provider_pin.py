@@ -75,7 +75,7 @@ def test_pin_check_cases() -> None:
     # Slugs with hyphens match display names without them.
     pin = pin_from_routing({"order": ["inference-net/fp8"], "allow_fallbacks": False})
     assert pin is not None and pin.providers == {"inferencenet"} and pin.quantizations == {"fp8"}
-    assert pin_from_routing(load_models()["openrouter_ds_1017"].routing).providers == {"deepinfra"}
+    assert pin_from_routing(load_models()["openrouter_ds_1017"].routing).providers == {"deepinfra", "inferencenet"}
 
 
 def _model(handler, price=None) -> tuple[RecordingModel, httpx2.AsyncClient]:
@@ -119,7 +119,9 @@ async def test_off_pin_reply_is_refused_logged_priced_and_stops_later_calls(tmp_
     assert mismatch["type"] == "provider_mismatch" and mismatch["response_provider"] == "Novita"
     assert mismatch["generation_id"].startswith("gen-") and mismatch["provider_check"]["ok"] is False
     assert error["type"] == "llm_error" and error["error_type"] == "ProviderMismatch"
-    # The refused call was billed, so it counts toward the cap; the larger of the price table and OpenRouter's cost counts.
+    # The refused call was billed, so it counts toward the cap: Novita is not in the price table, so it is
+    # priced at the table's upper bound, which here is above OpenRouter's own cost; the larger figure counts.
+    assert error["priced_as"] == "upper_bound"
     assert error["provider_reported_cost_usd"] == pytest.approx(0.001042132)
     assert error["cost_usd"] == pytest.approx(max(error["price_table_cost_usd"], error["provider_reported_cost_usd"]))
     assert error["cost_usd"] >= error["provider_reported_cost_usd"]

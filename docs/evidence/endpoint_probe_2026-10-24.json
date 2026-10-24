@@ -1,0 +1,715 @@
+{
+  "billed_usd": 0.00019477,
+  "configured_model": "deepseek/deepseek-v4.1-flash-1017",
+  "max_tokens": 256,
+  "model_key": "openrouter_ds_1017",
+  "notes": "deepinfra/fp8 answered 429 engine_overloaded (upstream_provider_shared_pool) at 19:39:20 UTC and to two more single-tag requests 45 s apart (not kept; 429s are not billed); the request at 19:41:14 UTC was served. inference-net/fp8 and inference-net/us both answer provider 'InferenceNet' and service_tier null; DeepInfra answers service_tier 'default'. Every billed cost equals the price table to the token. The last request ('whole-set') sent the configured routing unchanged (only + order over the three tags, quantizations [fp8], allow_fallbacks false, service_tier default): DeepInfra answered 429 inside the request and OpenRouter served it from InferenceNet (metadata summary 'available=3, attempts=2, selected=InferenceNet'), so the account's privacy setting does not exclude InferenceNet.",
+  "probe": "endpoints",
+  "prompt": "Call get_probe_code with note set to 'probe'. Do not reply with text.",
+  "results": [
+    {
+      "called_tools": [],
+      "error": "RateLimitError: Error code: 429 - {'error': {'message': 'Provider returned error', 'code': 429, 'metadata': {'raw': 'deepseek/deepseek-v4.1-flash-1017 is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations', 'provider_name': 'DeepInfra', 'is_byok': False, 'provider_error_code': 'engine_overloaded', 'limit_source': 'upstream_provider_shared_pool', 'remedy_hint': 'Retry shortly, add your own provider key (https://openrouter.ai/settings/integrations), or route to another provider with provider routing: https://openrouter.ai/docs/features/provider-routing'}}, 'user_id': '(redacted)', 'openrouter_metadata': {'requested': 'deepseek/deepseek-v4.1-flash-1017', 'strategy': 'direct', 'region': 'LHR', 'summary': 'available=1', 'attempt': 1, 'is_byok': False, 'endpoints': {'total': 34, 'available': [{'provider': 'DeepInfra', 'model': 'deepseek/deepseek-v4.1-flash-20261017', 'selected': False}]}, 'generation_time': 188}}",
+      "http_status": 429,
+      "pin_check_against_set": null,
+      "request_provider_object": {
+        "allow_fallbacks": false,
+        "only": [
+          "deepinfra/fp8"
+        ],
+        "order": [
+          "deepinfra/fp8"
+        ],
+        "require_parameters": true
+      },
+      "request_service_tier": "default",
+      "request_temperature": 0.0,
+      "response_body": {
+        "error": {
+          "code": 429,
+          "message": "Provider returned error",
+          "metadata": {
+            "is_byok": false,
+            "limit_source": "upstream_provider_shared_pool",
+            "provider_error_code": "engine_overloaded",
+            "provider_name": "DeepInfra",
+            "raw": "deepseek/deepseek-v4.1-flash-1017 is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations",
+            "remedy_hint": "Retry shortly, add your own provider key (https://openrouter.ai/settings/integrations), or route to another provider with provider routing: https://openrouter.ai/docs/features/provider-routing"
+          }
+        },
+        "openrouter_metadata": {
+          "attempt": 1,
+          "endpoints": {
+            "available": [
+              {
+                "model": "deepseek/deepseek-v4.1-flash-20261017",
+                "provider": "DeepInfra",
+                "selected": false
+              }
+            ],
+            "total": 34
+          },
+          "generation_time": 188,
+          "is_byok": false,
+          "region": "LHR",
+          "requested": "deepseek/deepseek-v4.1-flash-1017",
+          "strategy": "direct",
+          "summary": "available=1"
+        },
+        "user_id": "(redacted)"
+      },
+      "served": {
+        "generation_id": null,
+        "provider_unobserved": true,
+        "quantization": null,
+        "response_provider": null,
+        "router": {
+          "attempt": 1,
+          "requested": "deepseek/deepseek-v4.1-flash-1017",
+          "selected_model": null,
+          "selected_provider": null,
+          "strategy": "direct",
+          "summary": "available=1"
+        },
+        "served_model": "deepseek/deepseek-v4.1-flash-1017",
+        "served_provider": null,
+        "service_tier": null
+      },
+      "served_with_tools": false,
+      "tag": "deepinfra/fp8",
+      "tools_sent": 1,
+      "ts": "2026-10-24T19:39:20.276214+00:00",
+      "usage": {
+        "cache_hit_tokens": 0,
+        "cache_miss_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "provider_reported_cost_usd": null
+      }
+    },
+    {
+      "called_tools": [
+        "get_probe_code"
+      ],
+      "error": null,
+      "http_status": 200,
+      "pin_check_against_set": {
+        "expected": [
+          "deepinfra/fp8",
+          "inference-net/fp8",
+          "inference-net/us"
+        ],
+        "observed": {
+          "quantization": null,
+          "response_provider": "InferenceNet",
+          "selected_provider": "InferenceNet",
+          "service_tier": null
+        },
+        "ok": true,
+        "reason": ""
+      },
+      "request_provider_object": {
+        "allow_fallbacks": false,
+        "only": [
+          "inference-net/fp8"
+        ],
+        "order": [
+          "inference-net/fp8"
+        ],
+        "require_parameters": true
+      },
+      "request_service_tier": "default",
+      "request_temperature": 0.0,
+      "response_body": {
+        "choices": [
+          {
+            "finish_reason": "tool_calls",
+            "index": 0,
+            "logprobs": null,
+            "message": {
+              "content": null,
+              "reasoning": "The user wants me to call get_probe_code with note 'probe'. Do not reply with text.\n\nI should just call the tool with no text.",
+              "reasoning_details": [
+                {
+                  "format": "unknown",
+                  "index": 0,
+                  "text": "The user wants me to call get_probe_code with note 'probe'. Do not reply with text.\n\nI should just call the tool with no text.",
+                  "type": "reasoning.text"
+                }
+              ],
+              "refusal": null,
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"note\": \"probe\"}",
+                    "name": "get_probe_code"
+                  },
+                  "id": "chatcmpl-tool-898c8f9585a2b663",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "native_finish_reason": "tool_calls"
+          }
+        ],
+        "created": 1792870760,
+        "id": "gen-1792870760-VmFk4SHOWujtvIQhQ0cO",
+        "model": "deepseek/deepseek-v4.1-flash-1017",
+        "object": "chat.completion",
+        "openrouter_metadata": {
+          "attempt": 1,
+          "endpoints": {
+            "available": [
+              {
+                "model": "deepseek/deepseek-v4.1-flash-20261017",
+                "provider": "InferenceNet",
+                "selected": true
+              }
+            ],
+            "total": 34
+          },
+          "generation_time": 658,
+          "is_byok": false,
+          "region": "LHR",
+          "requested": "deepseek/deepseek-v4.1-flash-1017",
+          "strategy": "direct",
+          "summary": "available=1, selected=InferenceNet"
+        },
+        "provider": "InferenceNet",
+        "service_tier": null,
+        "system_fingerprint": "inference.net",
+        "usage": {
+          "completion_tokens": 74,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "image_tokens": 0,
+            "reasoning_tokens": 32
+          },
+          "cost": 6.044e-05,
+          "cost_details": {
+            "upstream_inference_completions_cost": 3.7e-05,
+            "upstream_inference_cost": 6.044e-05,
+            "upstream_inference_prompt_cost": 2.344e-05
+          },
+          "is_byok": false,
+          "prompt_tokens": 293,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "video_tokens": 0
+          },
+          "total_tokens": 367
+        }
+      },
+      "served": {
+        "generation_id": "gen-1792870760-VmFk4SHOWujtvIQhQ0cO",
+        "provider_unobserved": false,
+        "quantization": null,
+        "response_provider": "InferenceNet",
+        "router": {
+          "attempt": 1,
+          "requested": "deepseek/deepseek-v4.1-flash-1017",
+          "selected_model": "deepseek/deepseek-v4.1-flash-20261017",
+          "selected_provider": "InferenceNet",
+          "strategy": "direct",
+          "summary": "available=1, selected=InferenceNet"
+        },
+        "served_model": "deepseek/deepseek-v4.1-flash-20261017",
+        "served_provider": "InferenceNet",
+        "service_tier": null
+      },
+      "served_with_tools": true,
+      "tag": "inference-net/fp8",
+      "tools_sent": 1,
+      "ts": "2026-10-24T19:39:21.127225+00:00",
+      "usage": {
+        "cache_hit_tokens": 0,
+        "cache_miss_tokens": 293,
+        "input_tokens": 293,
+        "output_tokens": 74,
+        "provider_reported_cost_usd": 6.044e-05
+      }
+    },
+    {
+      "called_tools": [
+        "get_probe_code"
+      ],
+      "error": null,
+      "http_status": 200,
+      "pin_check_against_set": {
+        "expected": [
+          "deepinfra/fp8",
+          "inference-net/fp8",
+          "inference-net/us"
+        ],
+        "observed": {
+          "quantization": null,
+          "response_provider": "InferenceNet",
+          "selected_provider": "InferenceNet",
+          "service_tier": null
+        },
+        "ok": true,
+        "reason": ""
+      },
+      "request_provider_object": {
+        "allow_fallbacks": false,
+        "only": [
+          "inference-net/us"
+        ],
+        "order": [
+          "inference-net/us"
+        ],
+        "require_parameters": true
+      },
+      "request_service_tier": "default",
+      "request_temperature": 0.0,
+      "response_body": {
+        "choices": [
+          {
+            "finish_reason": "tool_calls",
+            "index": 0,
+            "logprobs": null,
+            "message": {
+              "content": null,
+              "reasoning": null,
+              "refusal": null,
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"note\": \"probe\"}",
+                    "name": "get_probe_code"
+                  },
+                  "id": "chatcmpl-tool-b4933c9893c0b5a8",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "native_finish_reason": "tool_calls"
+          }
+        ],
+        "created": 1792870761,
+        "id": "gen-1792870761-5dKMwJScvFOoQhlfBNCn",
+        "model": "deepseek/deepseek-v4.1-flash-1017",
+        "object": "chat.completion",
+        "openrouter_metadata": {
+          "attempt": 1,
+          "endpoints": {
+            "available": [
+              {
+                "model": "deepseek/deepseek-v4.1-flash-20261017",
+                "provider": "InferenceNet",
+                "selected": true
+              }
+            ],
+            "total": 34
+          },
+          "generation_time": 462,
+          "is_byok": false,
+          "region": "LHR",
+          "requested": "deepseek/deepseek-v4.1-flash-1017",
+          "strategy": "direct",
+          "summary": "available=1, selected=InferenceNet"
+        },
+        "provider": "InferenceNet",
+        "service_tier": null,
+        "system_fingerprint": "inference.net",
+        "usage": {
+          "completion_tokens": 42,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "image_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "cost": 2.6008e-05,
+          "cost_details": {
+            "upstream_inference_completions_cost": 2.1e-05,
+            "upstream_inference_cost": 2.6008e-05,
+            "upstream_inference_prompt_cost": 5.008e-06
+          },
+          "is_byok": false,
+          "prompt_tokens": 293,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 256,
+            "video_tokens": 0
+          },
+          "total_tokens": 335
+        }
+      },
+      "served": {
+        "generation_id": "gen-1792870761-5dKMwJScvFOoQhlfBNCn",
+        "provider_unobserved": false,
+        "quantization": null,
+        "response_provider": "InferenceNet",
+        "router": {
+          "attempt": 1,
+          "requested": "deepseek/deepseek-v4.1-flash-1017",
+          "selected_model": "deepseek/deepseek-v4.1-flash-20261017",
+          "selected_provider": "InferenceNet",
+          "strategy": "direct",
+          "summary": "available=1, selected=InferenceNet"
+        },
+        "served_model": "deepseek/deepseek-v4.1-flash-20261017",
+        "served_provider": "InferenceNet",
+        "service_tier": null
+      },
+      "served_with_tools": true,
+      "tag": "inference-net/us",
+      "tools_sent": 1,
+      "ts": "2026-10-24T19:39:21.746303+00:00",
+      "usage": {
+        "cache_hit_tokens": 256,
+        "cache_miss_tokens": 37,
+        "input_tokens": 293,
+        "output_tokens": 42,
+        "provider_reported_cost_usd": 2.6008e-05
+      }
+    },
+    {
+      "called_tools": [
+        "get_probe_code"
+      ],
+      "error": null,
+      "http_status": 200,
+      "pin_check_against_set": {
+        "expected": [
+          "deepinfra/fp8",
+          "inference-net/fp8",
+          "inference-net/us"
+        ],
+        "observed": {
+          "quantization": null,
+          "response_provider": "DeepInfra",
+          "selected_provider": "DeepInfra",
+          "service_tier": "default"
+        },
+        "ok": true,
+        "reason": ""
+      },
+      "request_provider_object": {
+        "allow_fallbacks": false,
+        "only": [
+          "deepinfra/fp8"
+        ],
+        "order": [
+          "deepinfra/fp8"
+        ],
+        "require_parameters": true
+      },
+      "request_service_tier": "default",
+      "request_temperature": 0.0,
+      "response_body": {
+        "choices": [
+          {
+            "finish_reason": "tool_calls",
+            "index": 0,
+            "logprobs": null,
+            "message": {
+              "content": null,
+              "reasoning": "The user wants me to call get_probe_code with note 'probe' and not reply with text.",
+              "reasoning_details": [
+                {
+                  "format": "unknown",
+                  "index": 0,
+                  "text": "The user wants me to call get_probe_code with note 'probe' and not reply with text.",
+                  "type": "reasoning.text"
+                }
+              ],
+              "refusal": null,
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"note\": \"probe\"}",
+                    "name": "get_probe_code"
+                  },
+                  "id": "chatcmpl-tool-89030ff1f4ada4d6",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "native_finish_reason": "tool_calls"
+          }
+        ],
+        "created": 1792870873,
+        "id": "gen-1792870873-3zeIqU6D66h7t2eFXcec",
+        "model": "deepseek/deepseek-v4.1-flash-1017",
+        "object": "chat.completion",
+        "openrouter_metadata": {
+          "attempt": 1,
+          "endpoints": {
+            "available": [
+              {
+                "model": "deepseek/deepseek-v4.1-flash-20261017",
+                "provider": "DeepInfra",
+                "selected": true
+              }
+            ],
+            "total": 34
+          },
+          "generation_time": 1193,
+          "is_byok": false,
+          "region": "LHR",
+          "requested": "deepseek/deepseek-v4.1-flash-1017",
+          "strategy": "direct",
+          "summary": "available=1, selected=DeepInfra"
+        },
+        "provider": "DeepInfra",
+        "service_tier": "default",
+        "system_fingerprint": null,
+        "usage": {
+          "completion_tokens": 64,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "image_tokens": 0,
+            "reasoning_tokens": 22
+          },
+          "cost": 4.9882e-05,
+          "cost_details": {
+            "upstream_inference_completions_cost": 1.8816e-05,
+            "upstream_inference_cost": 4.9882e-05,
+            "upstream_inference_prompt_cost": 3.1066e-05
+          },
+          "is_byok": false,
+          "prompt_tokens": 317,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "video_tokens": 0
+          },
+          "total_tokens": 381
+        }
+      },
+      "served": {
+        "generation_id": "gen-1792870873-3zeIqU6D66h7t2eFXcec",
+        "provider_unobserved": false,
+        "quantization": null,
+        "response_provider": "DeepInfra",
+        "router": {
+          "attempt": 1,
+          "requested": "deepseek/deepseek-v4.1-flash-1017",
+          "selected_model": "deepseek/deepseek-v4.1-flash-20261017",
+          "selected_provider": "DeepInfra",
+          "strategy": "direct",
+          "summary": "available=1, selected=DeepInfra"
+        },
+        "served_model": "deepseek/deepseek-v4.1-flash-20261017",
+        "served_provider": "DeepInfra",
+        "service_tier": "default"
+      },
+      "served_with_tools": true,
+      "tag": "deepinfra/fp8",
+      "tools_sent": 1,
+      "ts": "2026-10-24T19:41:14.393322+00:00",
+      "usage": {
+        "cache_hit_tokens": 0,
+        "cache_miss_tokens": 317,
+        "input_tokens": 317,
+        "output_tokens": 64,
+        "provider_reported_cost_usd": 4.9882e-05
+      }
+    },
+    {
+      "called_tools": [
+        "get_probe_code"
+      ],
+      "error": null,
+      "http_status": 200,
+      "pin_check_against_set": {
+        "expected": [
+          "deepinfra/fp8",
+          "inference-net/fp8",
+          "inference-net/us"
+        ],
+        "observed": {
+          "quantization": null,
+          "response_provider": "InferenceNet",
+          "selected_provider": "InferenceNet",
+          "service_tier": null
+        },
+        "ok": true,
+        "reason": ""
+      },
+      "request_provider_object": {
+        "allow_fallbacks": false,
+        "only": [
+          "deepinfra/fp8",
+          "inference-net/fp8",
+          "inference-net/us"
+        ],
+        "order": [
+          "deepinfra/fp8",
+          "inference-net/fp8",
+          "inference-net/us"
+        ],
+        "quantizations": [
+          "fp8"
+        ],
+        "require_parameters": true
+      },
+      "request_service_tier": "default",
+      "request_temperature": 0.0,
+      "response_body": {
+        "choices": [
+          {
+            "finish_reason": "tool_calls",
+            "index": 0,
+            "logprobs": null,
+            "message": {
+              "content": null,
+              "reasoning": "The user wants me to call get_probe_code with note 'probe'. And not reply with text. So just call the tool.",
+              "reasoning_details": [
+                {
+                  "format": "unknown",
+                  "index": 0,
+                  "text": "The user wants me to call get_probe_code with note 'probe'. And not reply with text. So just call the tool.",
+                  "type": "reasoning.text"
+                }
+              ],
+              "refusal": null,
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": "{\"note\": \"probe\"}",
+                    "name": "get_probe_code"
+                  },
+                  "id": "chatcmpl-tool-a94035c13e0adab1",
+                  "index": 0,
+                  "type": "function"
+                }
+              ]
+            },
+            "native_finish_reason": "tool_calls"
+          }
+        ],
+        "created": 1792871023,
+        "id": "gen-1792871023-Np5oCCBQbpwbrBexk45O",
+        "model": "deepseek/deepseek-v4.1-flash-1017",
+        "object": "chat.completion",
+        "openrouter_metadata": {
+          "attempt": 2,
+          "attempts": [
+            {
+              "model": "deepseek/deepseek-v4.1-flash-20261017",
+              "provider": "DeepInfra",
+              "status": 429
+            },
+            {
+              "model": "deepseek/deepseek-v4.1-flash-20261017",
+              "provider": "InferenceNet",
+              "status": 200
+            }
+          ],
+          "endpoints": {
+            "available": [
+              {
+                "model": "deepseek/deepseek-v4.1-flash-20261017",
+                "provider": "DeepInfra",
+                "selected": false
+              },
+              {
+                "model": "deepseek/deepseek-v4.1-flash-20261017",
+                "provider": "InferenceNet",
+                "selected": true
+              },
+              {
+                "model": "deepseek/deepseek-v4.1-flash-20261017",
+                "provider": "InferenceNet",
+                "selected": false
+              }
+            ],
+            "total": 34
+          },
+          "generation_time": 723,
+          "is_byok": false,
+          "region": "LHR",
+          "requested": "deepseek/deepseek-v4.1-flash-1017",
+          "strategy": "direct",
+          "summary": "available=3, attempts=2, selected=InferenceNet"
+        },
+        "provider": "InferenceNet",
+        "service_tier": null,
+        "system_fingerprint": "inference.net",
+        "usage": {
+          "completion_tokens": 70,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "image_tokens": 0,
+            "reasoning_tokens": 28
+          },
+          "cost": 5.844e-05,
+          "cost_details": {
+            "upstream_inference_completions_cost": 3.5e-05,
+            "upstream_inference_cost": 5.844e-05,
+            "upstream_inference_prompt_cost": 2.344e-05
+          },
+          "is_byok": false,
+          "prompt_tokens": 293,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0,
+            "video_tokens": 0
+          },
+          "total_tokens": 363
+        }
+      },
+      "served": {
+        "generation_id": "gen-1792871023-Np5oCCBQbpwbrBexk45O",
+        "provider_unobserved": false,
+        "quantization": null,
+        "response_provider": "InferenceNet",
+        "router": {
+          "attempt": 2,
+          "requested": "deepseek/deepseek-v4.1-flash-1017",
+          "selected_model": "deepseek/deepseek-v4.1-flash-20261017",
+          "selected_provider": "InferenceNet",
+          "strategy": "direct",
+          "summary": "available=3, attempts=2, selected=InferenceNet"
+        },
+        "served_model": "deepseek/deepseek-v4.1-flash-20261017",
+        "served_provider": "InferenceNet",
+        "service_tier": null
+      },
+      "served_with_tools": true,
+      "tag": "whole-set",
+      "tools_sent": 1,
+      "ts": "2026-10-24T19:43:44.113008+00:00",
+      "usage": {
+        "cache_hit_tokens": 0,
+        "cache_miss_tokens": 293,
+        "input_tokens": 293,
+        "output_tokens": 70,
+        "provider_reported_cost_usd": 5.844e-05
+      }
+    }
+  ],
+  "routing": {
+    "allow_fallbacks": false,
+    "only": [
+      "deepinfra/fp8",
+      "inference-net/fp8",
+      "inference-net/us"
+    ],
+    "order": [
+      "deepinfra/fp8",
+      "inference-net/fp8",
+      "inference-net/us"
+    ],
+    "quantizations": [
+      "fp8"
+    ],
+    "require_parameters": true,
+    "service_tier": "default"
+  },
+  "worst_case_estimate_usd": 0.000972
+}
