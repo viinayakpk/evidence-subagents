@@ -9,6 +9,7 @@ Verdicts:
 - "unverifiable": the evidence neither supports nor contradicts the claim, because it is about something else or shows too little.
 
 Rules:
+- Long tool results are shown as excerpts: the start of the result and the passages around the claim's quoted text and values. Each left-out stretch is marked [... N characters not shown ...]. Text that is not shown is unknown, not absent: never answer "contradicted" or "incomplete" because of something that could be in a stretch that is not shown.
 - Numbers must match at the precision the claim uses. A derived value (sum, average, percentage, count, ranking) is supported only if you can recompute it from the evidence.
 - A claim that an action was done (kind "action_done") is supported only if the evidence shows the action's result or a read-back of it.
 - If you are unsure whether the claim is supported, do not answer "supported".

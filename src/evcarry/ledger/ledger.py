@@ -23,6 +23,10 @@ class LedgerEntry:
     readback_arguments: dict[str, object] | None = None
     nondeterministic: bool = False
     volatile: list[str] | None = None
+    # The MCP server the tool belongs to (None for local tools). Absent in ledgers written before 2026-10-25.
+    server: str | None = None
+    # For a write: the argument values its read-back must show (recipient, subject, title), by argument name.
+    effect: dict[str, str] | None = None
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -53,6 +57,8 @@ class Ledger:
         readback_arguments: dict[str, object] | None = None,
         nondeterministic: bool = False,
         volatile: list[str] | None = None,
+        server: str | None = None,
+        effect: dict[str, str] | None = None,
     ) -> LedgerEntry:
         if not call_id:
             raise ValueError("tool-call id is required")
@@ -69,6 +75,8 @@ class Ledger:
             readback_arguments=readback_arguments,
             nondeterministic=nondeterministic,
             volatile=volatile,
+            server=server,
+            effect=effect,
         )
         self.entries[call_id] = entry
         return entry

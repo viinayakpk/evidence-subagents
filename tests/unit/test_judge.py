@@ -60,9 +60,10 @@ def test_judge_request_fields_and_truncation() -> None:
     request = judge_request(_claim(), "Required papers: A, B, C, D, E", 1000)
     assert "kind: fact\ntext: Required papers: A, B, C, D\nvalue: [\"A\", \"B\", \"C\", \"D\"]" in request
     assert request.endswith("EVIDENCE\nRequired papers: A, B, C, D, E\n")
+    # No middle cut (2026-10-25): the evidence arrives excerpted; anything still over the limit keeps its head.
     long = judge_request(_claim(), "H" * 900 + "T" * 900, 400)
-    assert "[1400 characters omitted]" in long
-    assert "H" * 300 in long and "T" * 100 in long
+    assert "H" * 400 + "\n[... 1400 characters not shown ...]" in long
+    assert "T" not in long.split("EVIDENCE", 1)[1]
     assert "(no evidence text)" in judge_request(_claim(), "  ", 100)
 
 

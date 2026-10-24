@@ -39,6 +39,8 @@ class ModelConfig:
     json_schema_outputs: bool = True
     # Scripted judge fixture (kind: scripted); see providers.scripted.KeyedFixtureModel.
     script: str | None = None
+    # Extra request body for this model's L3 judge calls only (its reasoning setting), never for agent calls.
+    judge_extra_body: dict[str, Any] | None = None
 
     def price_table(self) -> PriceTable:
         if not self.prices:
@@ -73,6 +75,7 @@ def load_models(path: str | Path | None = None) -> dict[str, ModelConfig]:
             model_env=body.get("model_env"),
             json_schema_outputs=bool(body.get("json_schema_outputs", True)),
             script=body.get("script"),
+            judge_extra_body=body.get("judge_extra_body"),
         )
     return loaded
 

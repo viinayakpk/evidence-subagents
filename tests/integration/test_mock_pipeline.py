@@ -210,16 +210,18 @@ def test_cli_dry_run_and_exit_codes(capsys, monkeypatch) -> None:
 
 
 def test_fault_table_expected_catchers() -> None:
+    """One value rule for L1 and L2 (2026-10-25): a one-token string value is checked at L1 on every claim, so a
+    fabricated entity and a false action_done whose value is in no cited result are caught there, not at a sampled L2."""
     found = {(row["kind"], row["variant"]): row["earliest"] for row in catch_table()}
     expected = {
         ("numeric_perturbation", "naive"): "L1",
         ("numeric_perturbation", "pointer_consistent"): "L1",
-        ("fabricated_entity", "naive"): "L2",
+        ("fabricated_entity", "naive"): "L1",
         ("fabricated_entity", "pointer_consistent"): "L0",
         ("omission", "naive"): None,
         ("omission", "pointer_consistent"): None,
-        ("false_action_done", "naive"): "L2",
-        ("false_action_done", "pointer_consistent"): "L2",
+        ("false_action_done", "naive"): "L1",
+        ("false_action_done", "pointer_consistent"): "L1",
         ("mismatched_pointer", "naive"): "L1",
         ("mismatched_pointer", "pointer_consistent"): "L3",
     }

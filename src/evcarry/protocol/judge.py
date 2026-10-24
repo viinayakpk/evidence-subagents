@@ -8,6 +8,16 @@ written to the run trace as a ``judge_call`` event with the prompt hash,
 request hash, raw reply, tokens, and cost. If the call or the parse fails, the
 lexical judge decides and the verdict is marked ``lexical_fallback``.
 
+The evidence arrives already excerpted (``protocol.audit.excerpt``), with every gap
+marked. ``judge_request`` no longer cuts it in the middle (2026-10-25, P1-7); an
+evidence text still above ``max_evidence_chars`` keeps its head and says how much
+is not shown.
+
+Reasoning (2026-10-25, P3-3, fixed before the hand-labelling): the judge's request
+carries the model entry's ``judge_extra_body`` (``configs/models.yaml``), so its
+reasoning setting is explicit instead of the provider default, and the same for
+every arm. Each ``judge_call`` logs it.
+
 ``LexicalJudge`` is the cheap deterministic judge (and the fallback):
 - Every hyphenated token in the claim text (``student-Z``) must appear in the
   evidence blob.
@@ -149,13 +159,10 @@ def parse_judge_output(text: str) -> JudgeOutput:
 
 
 def judge_request(claim: Claim, evidence_text: str, max_evidence_chars: int) -> str:
-    """The user message: the claim fields, then the evidence (cut in the middle if too long)."""
+    """The user message: the claim fields, then the evidence (its head, with the rest marked not shown, if too long)."""
     evidence = evidence_text
     if len(evidence) > max_evidence_chars:
-        head = max_evidence_chars * 3 // 4
-        tail = max_evidence_chars - head
-        cut = len(evidence) - head - tail
-        evidence = f"{evidence[:head]}\n...[{cut} characters omitted]...\n{evidence[-tail:]}"
+        evidence = f"{evidence[:max_evidence_chars]}\n[... {len(evidence) - max_evidence_chars} characters not shown ...]"
     value = json.dumps(claim.value, ensure_ascii=False, sort_keys=True, default=str)
     return (
         "CLAIM\n"
@@ -199,7 +206,8 @@ class LlmJudge:
         price: PriceTable,
         writer: JsonlWriter | None = None,
         fallback: LexicalJudge | None = None,
-        max_evidence_chars: int = 12000,
+        max_evidence_chars: int = 24000,
+        extra_body: dict[str, Any] | None = None,
     ) -> None:
         self.model = model
         self.model_name = model_name
@@ -209,6 +217,8 @@ class LlmJudge:
         self.writer = writer
         self.fallback = fallback if fallback is not None else LexicalJudge()
         self.max_evidence_chars = max_evidence_chars
+        # Sent with every judge request (the reasoning setting); None sends nothing extra.
+        self.extra_body = dict(extra_body) if extra_body else None
         self.calls = 0
         self.cost_usd = 0.0
         # Calls decided by the lexical judge because the model call or its parse failed.
@@ -224,7 +234,7 @@ class LlmJudge:
             response = await self.model.get_response(
                 system_instructions=self.prompt,
                 input=request,
-                model_settings=ModelSettings(temperature=TEMPERATURE),
+                model_settings=ModelSettings(temperature=TEMPERATURE, extra_body=self.extra_body),
                 tools=[],
                 output_schema=None,
                 handoffs=[],
@@ -289,6 +299,7 @@ class LlmJudge:
                     "judge_model": self.model_name,
                     **(record.provenance() if record is not None else {"served_model": None}),
                     "temperature": record.temperature if record is not None else None,
+                    "judge_extra_body": self.extra_body,
                     "prompt_sha256": self.prompt_sha256,
                     "request_sha256": detail["request_sha256"],
                     "request_chars": len(request),
@@ -345,4 +356,6 @@ def build_judge(
         model = build_model(config, agent_name="judge")
         model.role = "judge"  # its failed calls count as judge cost in run_end
     prompt = resolve_repo_path(prompt_file).read_text(encoding="utf-8")
-    return LlmJudge(model, model_name=name, prompt=prompt, price=config.price_table(), writer=writer)
+    return LlmJudge(
+        model, model_name=name, prompt=prompt, price=config.price_table(), writer=writer, extra_body=config.judge_extra_body
+    )

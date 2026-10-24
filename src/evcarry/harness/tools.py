@@ -10,6 +10,7 @@ show the raw text.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,13 +36,18 @@ class ToolMeta:
     # Gym writes: read-back argument <- write argument, plus constant arguments.
     readback_from: dict[str, str] | None = None
     readback_fixed: dict[str, Any] | None = None
+    # Read-back argument <- the first group of a regex over the write's result (an id the server assigned).
+    readback_from_result: dict[str, str] | None = None
+    # Write arguments whose values the read-back must show (L2 checks the write's effect, not its success text).
+    effect: tuple[str, ...] = ()
     nondeterministic: bool = False
     # Regexes masked before an L2 replay is compared with the ledger.
     volatile: tuple[str, ...] = ()
     strict: bool = True
     server: str | None = None
 
-    def readback_for(self, arguments: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    def readback_for(self, arguments: dict[str, Any], result_text: str = "") -> tuple[str, dict[str, Any]] | None:
+        """The read-back call for this write, or None (no read-back tool, or the result has no id to read back)."""
         if not self.readback_tool:
             return None
         args = dict(self.readback_arguments or {})
@@ -49,7 +55,21 @@ class ToolMeta:
         for target, source in (self.readback_from or {}).items():
             if source in arguments:
                 args[target] = arguments[source]
+        for target, pattern in (self.readback_from_result or {}).items():
+            match = re.search(pattern, result_text)
+            if match is None:
+                return None  # the write failed or answered in an unknown shape: nothing to read back
+            args[target] = match.group(1)
         return self.readback_tool, args
+
+    def effect_for(self, arguments: dict[str, Any]) -> dict[str, str] | None:
+        """The effect fields of this write's arguments that its read-back must show."""
+        found = {
+            name: str(arguments[name]).strip()
+            for name in self.effect
+            if isinstance(arguments.get(name), (str, int, float)) and str(arguments[name]).strip()
+        }
+        return found or None
 
 
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -82,6 +102,7 @@ CATALOG: dict[str, ToolMeta] = {
         False,
         "read_file",
         {"path": "answer.txt"},
+        effect=("text",),
     ),
     "create_event": ToolMeta(
         "create_event",
@@ -90,6 +111,7 @@ CATALOG: dict[str, ToolMeta] = {
         False,
         "list_events",
         {},
+        effect=("title",),
     ),
     "list_events": ToolMeta(
         "list_events",
@@ -211,7 +233,7 @@ def build_function_tool(name: str, caller: Any, toolset: Toolset | None = None) 
         if ledger is None:
             return text
         ledger_id = ledger.unique_id(getattr(ctx, "tool_call_id", "") or name)
-        readback = meta.readback_for(arguments)
+        readback = meta.readback_for(arguments, text)
         ledger.record(
             call_id=ledger_id,
             tool_name=name,
@@ -222,6 +244,8 @@ def build_function_tool(name: str, caller: Any, toolset: Toolset | None = None) 
             readback_arguments=readback[1] if readback else None,
             nondeterministic=meta.nondeterministic,
             volatile=list(meta.volatile) or None,
+            server=meta.server,
+            effect=meta.effect_for(arguments) if not meta.read_only else None,
         )
         if toolset is None:
             return text

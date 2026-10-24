@@ -148,6 +148,8 @@ class GymToolPolicy:
             readback_tool=readback.get("tool"),
             readback_from=dict(readback.get("args") or {}) or None,
             readback_fixed=dict(readback.get("fixed") or {}) or None,
+            readback_from_result=dict(readback.get("from_result") or {}) or None,
+            effect=tuple(readback.get("effect") or ()),
             nondeterministic=read_only and self.is_nondeterministic(server, tool.name),
             volatile=self.volatile.get(server, ()),
             strict=False,

@@ -10,10 +10,14 @@
 #                instead of as drift.
 # stateful_servers  Annotations are ignored: every call depends on or changes session state.
 # volatile       Multiline regexes masked in both the logged and the replayed text before L2
-#                compares them (per-call ids that a server generates afresh every time).
+#                compares them (per-call ids and clocks a server generates afresh every time).
 # readback       For a write, the read that shows its effect. `args` maps a read-back
-#                argument to the write argument it copies; `fixed` adds constant arguments.
-#                L2 checks the claim value against the read-back text.
+#                argument to the write argument it copies; `fixed` adds constant arguments;
+#                `from_result` takes a read-back argument from the write's result (the first
+#                regex group: an id the server assigned). `effect` lists write arguments whose
+#                values the read-back must show (L2 fails the claim if it does not). L2 checks
+#                the claim value against the write's logged result and arguments plus the
+#                read-back text, not against the read-back alone (2026-10-25, P1-2).
 #
 # tests/unit/test_gym_tools.py checks every pattern against tests/fixtures/gym/tool_inventory.json.
 
@@ -56,11 +60,19 @@ stateful_servers: [playwright_with_chunk]
 
 volatile:
   snowflake: ['^data_id: [0-9a-f-]+$']
+  # canvas_health_check answers with the server's clock (2 L2 drift failures in the pilot).
+  canvas: ['"timestamp": "[0-9T:.Z+-]+"']
 
 readback:
   filesystem-write_file: {tool: filesystem-read_text_file, args: {path: path}}
   filesystem-edit_file: {tool: filesystem-read_text_file, args: {path: path}}
   excel-write_data_to_excel: {tool: excel-read_data_from_excel, args: {filepath: filepath, sheet_name: sheet_name}}
   excel-create_workbook: {tool: excel-get_workbook_metadata, args: {filepath: filepath}}
-  excel-create_worksheet: {tool: excel-get_workbook_metadata, args: {filepath: filepath}}
-  emails-send_email: {tool: emails-search_emails, args: {query: subject}, fixed: {folder: Sent}}
+  excel-create_worksheet: {tool: excel-get_workbook_metadata, args: {filepath: filepath}, effect: [sheet_name]}
+  emails-send_email: {tool: emails-search_emails, args: {query: subject}, fixed: {folder: Sent}, effect: [subject]}
+  google_calendar-create_event: {tool: google_calendar-get_event, from_result: {eventId: 'Event created with ID: ([0-9A-Za-z_-]+)'}, effect: [summary]}
+  google_sheet-update_cells: {tool: google_sheet-get_sheet_data, args: {spreadsheet_id: spreadsheet_id, sheet: sheet, range: range}}
+  notion-API-post-page: {tool: notion-API-retrieve-a-page, from_result: {page_id: '"id"\s*:\s*"([0-9A-Za-z-]{8,})"'}}
+  notion-API-patch-page: {tool: notion-API-retrieve-a-page, args: {page_id: page_id}}
+  notion-API-create-a-database: {tool: notion-API-retrieve-a-database, from_result: {database_id: '"id"\s*:\s*"([0-9A-Za-z-]{8,})"'}}
+  notion-API-patch-block-children: {tool: notion-API-get-block-children, args: {block_id: block_id}}
