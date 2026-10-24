@@ -50,3 +50,20 @@ free_debug:
   api_key_env: FREE_DEBUG_API_KEY
   billable: false
   prices: configs/prices/local_zero.yaml
+openrouter_ds_1017:
+  # DeepSeek V4.1 Flash 1017 via OpenRouter, pinned to DeepInfra's FP8 endpoint
+  # (DeepSeek's own endpoint is blocked by the account's training-data privacy setting).
+  # Slug and prices checked on OpenRouter 2026-10-24.
+  kind: openrouter
+  base_url: https://openrouter.ai/api/v1
+  model: deepseek/deepseek-v4.1-flash-1017
+  api_key_env: OPENROUTER_API_KEY
+  http_referer: https://github.com/viinayakpk/evidence-subagents
+  x_title: evcarry
+  billable: true
+  prices: configs/prices/openrouter_deepseek_1017_2026-10-24.yaml
+  json_schema_outputs: false
+  routing:
+    order: [deepinfra/fp8]
+    allow_fallbacks: false
+    require_parameters: true

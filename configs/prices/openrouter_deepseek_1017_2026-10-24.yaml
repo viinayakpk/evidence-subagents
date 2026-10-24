@@ -1,0 +1,14 @@
+currency: USD
+example_only: false
+peak_multiplier: 1
+weekdays_only: true
+peak_windows_utc: []
+per_million_tokens:
+  input_cache_miss: 0.098
+  input_cache_hit: 0.00294
+  output: 0.294
+note: >
+  OpenRouter endpoint prices for deepseek/deepseek-v4.1-flash-1017 on the
+  DeepInfra FP8 endpoint (deepinfra/fp8), read from the OpenRouter endpoints API on 2026-10-24.
+  Budget estimate only; provider_reported_cost_usd from OpenRouter is the
+  billed number.

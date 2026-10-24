@@ -1,0 +1,16 @@
+# First real M4 command that exercises this harness without Docker.
+# Needs OPENROUTER_API_KEY. DeepSeek V4.1 Flash 1017 via OpenRouter pinned to DeepSeek. Fixture tasks, no Docker.
+experiment: openrouter_smoke
+tasks: tests/fixtures/tasks/fixtures3.txt
+arms: [sa]
+seeds: [1]
+model: openrouter_ds_1017
+audit: {sampler: risk, rate: 0, checks: [L0, L1]}
+judge_model: lexical
+limits: {max_steps: 24, max_seconds: 300, context: 32000}
+prompts: prompts/v1
+budget: {cap_usd: 1, schedule: any}
+parallel_tasks: 1
+out: runs/openrouter_smoke
+environment: in_process
+task_root: tests/fixtures/gym/tasks/finalpool
