@@ -1,0 +1,2 @@
+# single fixture for injection tests
+fixture-sections

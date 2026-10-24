@@ -1,0 +1,41 @@
+# Provider entries. API keys come from the environment. Nothing here is a secret.
+deepseek_flash:
+  kind: deepseek
+  base_url: https://api.deepseek.com
+  model: deepseek-flash
+  api_key_env: DEEPSEEK_API_KEY
+  billable: true
+  prices: configs/prices/deepseek_2026-10-24.yaml
+local_primary:
+  kind: vllm
+  base_url: http://127.0.0.1:8000/v1
+  model: primitive-ai/Qwen3.8-Flash-Next-NVFP4
+  api_key_env: VLLM_API_KEY
+  api_key_default: EMPTY
+  billable: false
+  prices: configs/prices/local_zero.yaml
+mock:
+  kind: scripted
+  model: mock-scripted
+  billable: false
+  prices: configs/prices/local_zero.yaml
+openrouter_pinned:
+  kind: openrouter
+  base_url: https://openrouter.ai/api/v1
+  model: deepseek/deepseek-chat
+  api_key_env: OPENROUTER_API_KEY
+  http_referer: https://example.com/evcarry
+  x_title: evcarry
+  billable: true
+  prices: configs/prices/openrouter_example_2026-10-24.yaml
+  routing:
+    order: [deepseek]
+    allow_fallbacks: false
+    require_parameters: true
+free_debug:
+  kind: openai_compatible
+  base_url_env: FREE_DEBUG_BASE_URL
+  model_env: FREE_DEBUG_MODEL
+  api_key_env: FREE_DEBUG_API_KEY
+  billable: false
+  prices: configs/prices/local_zero.yaml

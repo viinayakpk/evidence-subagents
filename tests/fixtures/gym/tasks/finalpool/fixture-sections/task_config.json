@@ -1,0 +1,4 @@
+{
+  "needed_mcp_servers": ["fake"],
+  "evcarry_local_eval": true
+}

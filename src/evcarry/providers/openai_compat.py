@@ -1,0 +1,257 @@
+"""OpenAI-compatible chat model that records the raw HTTP response.
+
+The Agents SDK copies ``provider_data.model`` from the model we requested and
+drops DeepSeek cache fields from ``Usage``. Served provider, served model, and
+cache tokens are taken from the response body captured by an httpx hook.
+
+``stream_response`` is forwarded without that accounting. ``Runner.run`` uses
+``get_response``.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from collections import deque
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from typing import Any
+
+import httpx2
+from agents.model_settings import ModelSettings
+from agents.models.interface import ModelTracing
+from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
+from openai import AsyncOpenAI
+from openai.types.responses.response_prompt_param import ResponsePromptParam
+
+from evcarry.providers.identity import ServedIdentity, served_identity
+from evcarry.providers.usage import TokenUsage, token_usage_from_body
+
+# One bucket per in-flight get_response, so concurrent calls do not share attempts.
+_HTTP_BODIES: ContextVar[list[dict[str, Any]] | None] = ContextVar("evcarry_http_bodies", default=None)
+
+_ROUTING_KEYS = (
+    "order",
+    "allow_fallbacks",
+    "require_parameters",
+    "only",
+    "ignore",
+    "quantizations",
+    "sort",
+    "data_collection",
+    "zdr",
+)
+
+
+@dataclass
+class LlmCallRecord:
+    configured_model: str
+    kind: str
+    identity: ServedIdentity
+    usage: TokenUsage
+    routing: dict[str, Any] | None
+    attempts: int
+    latency_ms: float
+    system_instructions: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "configured_model": self.configured_model,
+            "kind": self.kind,
+            "served_model": self.identity.served_model,
+            "served_provider": self.identity.served_provider,
+            "provider_unobserved": self.identity.provider_unobserved,
+            "router": self.identity.router,
+            "routing": self.routing,
+            "attempts": self.attempts,
+            "latency_ms": self.latency_ms,
+            "usage": self.usage.as_dict(),
+        }
+
+
+def routing_extra_body(routing: dict[str, Any] | None) -> dict[str, Any]:
+    """OpenRouter ``provider`` object. Unknown keys are dropped."""
+    if not routing:
+        return {}
+    provider = {key: routing[key] for key in _ROUTING_KEYS if key in routing}
+    if not provider:
+        return {}
+    return {"provider": provider}
+
+
+def openrouter_headers(*, http_referer: str | None, x_title: str | None) -> dict[str, str]:
+    """Headers sent on every OpenRouter call.
+
+    ``X-OpenRouter-Metadata: enabled`` makes the response include
+    ``openrouter_metadata`` (omitted on cache hits). ``X-Title`` is the header
+    requested for this harness; ``X-OpenRouter-Title`` is the name current
+    OpenRouter docs use. Both carry ``x_title`` when it is set.
+    """
+    headers = {"X-OpenRouter-Metadata": "enabled"}
+    if http_referer:
+        headers["HTTP-Referer"] = http_referer
+    if x_title:
+        headers["X-Title"] = x_title
+        headers["X-OpenRouter-Title"] = x_title
+    return headers
+
+
+async def capture_http_body(response: httpx2.Response) -> None:
+    """Append each HTTP response JSON to the current call's bucket."""
+    bucket = _HTTP_BODIES.get()
+    if bucket is None:
+        return
+    try:
+        await response.aread()
+        payload = json.loads(response.content)
+    except Exception:
+        return
+    if isinstance(payload, dict):
+        bucket.append({"status": response.status_code, "body": payload})
+
+
+def http_client_with_capture(**kwargs: Any) -> httpx2.AsyncClient:
+    hooks = dict(kwargs.pop("event_hooks", {}) or {})
+    response_hooks = list(hooks.get("response", []))
+    response_hooks.append(capture_http_body)
+    hooks["response"] = response_hooks
+    return httpx2.AsyncClient(event_hooks=hooks, **kwargs)
+
+
+def async_openai_client(
+    *,
+    base_url: str,
+    api_key: str,
+    default_headers: dict[str, str] | None = None,
+    http_client: httpx2.AsyncClient | None = None,
+) -> AsyncOpenAI:
+    client = http_client or http_client_with_capture()
+    return AsyncOpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        default_headers=default_headers or None,
+        http_client=client,
+    )
+
+
+class RecordingModel(OpenAIChatCompletionsModel):
+    """Chat-completions model that pins OpenRouter routing and logs who served the call."""
+
+    def __init__(
+        self,
+        model: str,
+        openai_client: AsyncOpenAI,
+        *,
+        kind: str,
+        routing: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(model=model, openai_client=openai_client)
+        self.kind = kind
+        self.configured_model = model if isinstance(model, str) else str(model)
+        self.routing = dict(routing) if routing else None
+        self.extra_headers = dict(extra_headers or {})
+        self.history: list[LlmCallRecord] = []
+        self._pending: deque[LlmCallRecord] = deque()
+
+    def take_record(self) -> LlmCallRecord | None:
+        if not self._pending:
+            return None
+        return self._pending.popleft()
+
+    def _merge_settings(self, model_settings: ModelSettings) -> ModelSettings:
+        pinned = routing_extra_body(self.routing)
+        body = dict(model_settings.extra_body or {})
+        if "provider" in pinned and isinstance(body.get("provider"), dict):
+            # The model config's routing wins over a per-call provider object.
+            provider = {**body["provider"], **pinned["provider"]}
+            body = {**body, **pinned, "provider": provider}
+        else:
+            body = {**body, **pinned}
+        headers = {**(model_settings.extra_headers or {}), **self.extra_headers}
+        from dataclasses import replace
+
+        return replace(
+            model_settings,
+            extra_body=body or None,
+            extra_headers=headers or None,
+        )
+
+    def _record(self, bucket: list[dict[str, Any]], started: float, system_instructions: str | None) -> None:
+        successes = [item for item in bucket if 200 <= int(item.get("status", 0)) < 300]
+        chosen = successes[-1]["body"] if successes else (bucket[-1]["body"] if bucket else None)
+        identity = served_identity(chosen, kind=self.kind, configured_model=self.configured_model)
+        usage = token_usage_from_body(chosen if isinstance(chosen, dict) else None)
+        record = LlmCallRecord(
+            configured_model=self.configured_model,
+            kind=self.kind,
+            identity=identity,
+            usage=usage,
+            routing=self.routing,
+            attempts=len(bucket),
+            latency_ms=(time.perf_counter() - started) * 1000,
+            system_instructions=system_instructions,
+        )
+        self.history.append(record)
+        self._pending.append(record)
+
+    async def get_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[Any],
+        model_settings: ModelSettings,
+        tools: list[Any],
+        output_schema: Any,
+        handoffs: list[Any],
+        tracing: ModelTracing,
+        previous_response_id: str | None = None,
+        conversation_id: str | None = None,
+        prompt: ResponsePromptParam | None = None,
+    ) -> Any:
+        bucket: list[dict[str, Any]] = []
+        token = _HTTP_BODIES.set(bucket)
+        started = time.perf_counter()
+        try:
+            return await super().get_response(
+                system_instructions,
+                input,
+                self._merge_settings(model_settings),
+                tools,
+                output_schema,
+                handoffs,
+                tracing,
+                previous_response_id=previous_response_id,
+                conversation_id=conversation_id,
+                prompt=prompt,
+            )
+        finally:
+            self._record(bucket, started, system_instructions)
+            _HTTP_BODIES.reset(token)
+
+    def stream_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[Any],
+        model_settings: ModelSettings,
+        tools: list[Any],
+        output_schema: Any,
+        handoffs: list[Any],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> Any:
+        """Delegate streaming. Token and provider logs are not recorded on this path."""
+        return super().stream_response(
+            system_instructions,
+            input,
+            self._merge_settings(model_settings),
+            tools,
+            output_schema,
+            handoffs,
+            tracing,
+            previous_response_id=previous_response_id,
+            conversation_id=conversation_id,
+            prompt=prompt,
+        )

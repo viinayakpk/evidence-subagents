@@ -1,0 +1,14 @@
+experiment: mock_e2e
+tasks: tests/fixtures/tasks/fixtures3.txt
+arms: [sa, vanilla_mad, evidence_risk]
+seeds: [1]
+model: mock
+audit: {sampler: risk, rate: 1.0, checks: [L0, L1, L2, L3]}
+judge_model: lexical
+limits: {max_steps: 12, max_seconds: 60, context: 32000}
+prompts: prompts/v1
+budget: {cap_usd: 0, schedule: any}
+parallel_tasks: 1
+out: runs/mock_e2e
+environment: in_process
+task_root: tests/fixtures/gym/tasks/finalpool
