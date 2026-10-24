@@ -225,3 +225,41 @@ async def test_the_pinned_route_asks_for_the_standard_service_tier() -> None:
     await http.aclose()
     assert sent[0]["service_tier"] == "default" and sent[0]["provider"]["allow_fallbacks"] is False
     assert model.take_record().pin.ok is True
+
+
+async def test_an_overloaded_provider_is_retried_before_the_call_fails() -> None:
+    """The second pilot launch failed on 429 engine_overloaded after the client's ~4 s of quick retries."""
+    statuses = iter([429, 429, 429, 429, 429, 429, 200])
+    ok = {
+        "id": "gen-2", "object": "chat.completion", "created": 0, "model": "m", "provider": "DeepInfra",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        status = next(statuses)
+        body = ok if status == 200 else {"error": {"message": "Provider returned error", "code": 429}}
+        return httpx2.Response(status, json=body)
+
+    http = httpx2.AsyncClient(transport=httpx2.MockTransport(handler), event_hooks={"response": [capture_http_body]})
+    client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key="test-not-real", http_client=http, max_retries=0)
+    model = RecordingModel("deepseek/deepseek-v4.1-flash-1017", client, kind="openrouter")
+    model.retry_waits = (0.0,) * 6
+    await model.get_response(
+        "sys", "hi", ModelSettings(temperature=0.0), [], None, [], ModelTracing.DISABLED,
+        previous_response_id=None, conversation_id=None, prompt=None,
+    )
+    record = model.take_record()
+    assert record.attempts == 7 and record.identity.response_provider == "DeepInfra"
+
+    model.retry_waits = (0.0,)  # one wait, then it gives up and raises
+    statuses = iter([429, 429])
+    import openai
+    import pytest
+
+    with pytest.raises(openai.RateLimitError):
+        await model.get_response(
+            "sys", "hi", ModelSettings(temperature=0.0), [], None, [], ModelTracing.DISABLED,
+            previous_response_id=None, conversation_id=None, prompt=None,
+        )
+    await http.aclose()

@@ -10,6 +10,7 @@ cache tokens are taken from the response body captured by an httpx hook.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections import deque
@@ -22,7 +23,7 @@ import httpx2
 from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
-from openai import AsyncOpenAI
+from openai import APIConnectionError, AsyncOpenAI, InternalServerError, RateLimitError
 from openai.types.responses.response_prompt_param import ResponsePromptParam
 
 from evcarry.providers.identity import ServedIdentity, served_identity
@@ -33,6 +34,13 @@ from evcarry.trace.writer import current_writer
 
 # One bucket per in-flight get_response, so concurrent calls do not share attempts.
 _HTTP_BODIES: ContextVar[list[dict[str, Any]] | None] = ContextVar("evcarry_http_bodies", default=None)
+
+# Waits between attempts of one model call after a 429, a 5xx or a dropped connection. Each attempt
+# is the OpenAI client's request with its own two quick retries (about 4 s); DeepInfra's shared pool
+# answers "engine_overloaded" 429s for longer than that (first pilot relaunch, 2026-10-24). Unanswered
+# requests are not billed. The same for every arm and for the judge.
+RETRY_WAITS_S: tuple[float, ...] = (5.0, 15.0, 30.0, 60.0, 120.0)
+_RETRYABLE = (RateLimitError, InternalServerError, APIConnectionError)
 
 _ROUTING_KEYS = (
     "order",
@@ -195,6 +203,7 @@ class RecordingModel(OpenAIChatCompletionsModel):
         self.extra_headers = dict(extra_headers or {})
         self.history: list[LlmCallRecord] = []
         self._pending: deque[LlmCallRecord] = deque()
+        self.retry_waits = RETRY_WAITS_S
 
     def take_record(self) -> LlmCallRecord | None:
         if not self._pending:
@@ -292,18 +301,25 @@ class RecordingModel(OpenAIChatCompletionsModel):
         token = _HTTP_BODIES.set(bucket)
         started = time.perf_counter()
         try:
-            response = await super().get_response(
-                system_instructions,
-                input,
-                self._merge_settings(model_settings),
-                tools,
-                output_schema,
-                handoffs,
-                tracing,
-                previous_response_id=previous_response_id,
-                conversation_id=conversation_id,
-                prompt=prompt,
-            )
+            for wait in (*self.retry_waits, None):
+                try:
+                    response = await super().get_response(
+                        system_instructions,
+                        input,
+                        self._merge_settings(model_settings),
+                        tools,
+                        output_schema,
+                        handoffs,
+                        tracing,
+                        previous_response_id=previous_response_id,
+                        conversation_id=conversation_id,
+                        prompt=prompt,
+                    )
+                    break
+                except _RETRYABLE:
+                    if wait is None:
+                        raise
+                    await asyncio.sleep(wait)  # every HTTP status lands in the bucket: attempts and statuses show the retries
         except BaseException as error:
             # Not queued for take_record: on_llm_end does not run for a failed call, so a
             # queued record would be paired with the next successful call and that
