@@ -1,4 +1,4 @@
-# DeepSeek-V4.1-Flash-1017 through OpenRouter, pinned to DeepInfra's fp8 endpoint (openrouter_ds_1017).
+# DeepSeek-V4.1-Flash-1017 through OpenRouter, pinned to a fixed set of fp8 endpoints, DeepInfra first (openrouter_ds_1017).
 # The L3 judge is the same model: billed, and counted toward the cap. Needs OPENROUTER_API_KEY.
 # The OpenRouter price table has no peak windows; offpeak_only matters only if the model is switched back to deepseek_flash.
 experiment: headline_deepseek_v1

@@ -1,4 +1,4 @@
-# DeepSeek-V4.1-Flash-1017 through OpenRouter, pinned to DeepInfra's fp8 endpoint (openrouter_ds_1017).
+# DeepSeek-V4.1-Flash-1017 through OpenRouter, pinned to a fixed set of fp8 endpoints, DeepInfra first (openrouter_ds_1017).
 # The L3 judge is the same model: billed, and counted toward the cap. Needs OPENROUTER_API_KEY.
 # The OpenRouter price table has no peak windows; offpeak_only matters only if the model is switched back to deepseek_flash.
 experiment: pilot_deepseek
@@ -12,8 +12,14 @@ judge_model: openrouter_ds_1017
 limits: {max_steps: 40, subagent_max_turns: 40, max_seconds: 7200, context: 131072}
 prompts: prompts/gym_v1
 # A run whose spend (agent + judge) reaches $0.25 is stopped: status cost_ceiling, counted as failed.
-budget: {cap_usd: 5, run_ceiling_usd: 0.25, schedule: offpeak_only}
-parallel_tasks: 4
+# Owner stop rule (2026-10-24): no run starts if spend so far, across every attempt, plus the reserve for it and
+# the runs in flight would pass $4.50; the $5 pilot budget keeps $0.50 of margin.
+budget: {cap_usd: 4.5, run_ceiling_usd: 0.25, schedule: offpeak_only}
+# Grid order is task-major, so a multiple of the four arms starts all arms of a task together and they meet the
+# same provider conditions. 8 (two tasks at once): 429s on DeepInfra now move to InferenceNet inside the request,
+# DeepInfra's 429s come from OpenRouter's shared upstream pool rather than our own rate, and 8 x 1.2 x $0.25
+# = $2.40 of reserve still fits under the cap.
+parallel_tasks: 8
 out: runs/pilot_deepseek
 environment: docker
 task_root: third_party/toolathlon_gym/tasks/finalpool

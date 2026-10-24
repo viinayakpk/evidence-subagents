@@ -159,7 +159,8 @@ async def test_turn_limits_reach_the_sub_agents(tmp_path: Path, monkeypatch) -> 
         paid = load_experiment(f"configs/experiments/{name}.yaml")
         assert paid.limits.max_steps == 40 and paid.limits.subagent_max_turns == 40
         assert paid.budget.run_ceiling_usd == 0.25
-    assert load_experiment("configs/experiments/pilot_deepseek.yaml").budget.cap_usd == 5
+    # Pilot: the owner's $5 budget, run with the stop rule "no run may take spend past $4.50".
+    assert load_experiment("configs/experiments/pilot_deepseek.yaml").budget.cap_usd == 4.5
     assert load_experiment("configs/experiments/headline_deepseek.yaml").budget.cap_usd == 45
 
 
