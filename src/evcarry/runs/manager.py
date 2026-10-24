@@ -481,6 +481,7 @@ async def _run_one(
                 "output_tokens": output_tokens,
                 "cost_usd": cost,
                 "judge_calls": int(getattr(judge, "calls", 0)),
+                "judge_fallbacks": int(getattr(judge, "fallbacks", 0)),
                 "judge_cost_usd": judge_cost,
                 # What the cap counts for this run (event_spend), and the provider's own bill.
                 "spend_usd": spend,

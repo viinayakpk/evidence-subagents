@@ -209,6 +209,8 @@ class LlmJudge:
         self.max_evidence_chars = max_evidence_chars
         self.calls = 0
         self.cost_usd = 0.0
+        # Calls decided by the lexical judge because the model call or its parse failed.
+        self.fallbacks = 0
 
     async def ajudge(self, claim: Claim, evidence_text: str) -> JudgeVerdict:
         request = judge_request(claim, evidence_text, self.max_evidence_chars)
@@ -262,6 +264,7 @@ class LlmJudge:
                 detail=detail,
             )
         else:
+            self.fallbacks += 1
             backup = self.fallback.judge(claim, evidence_text)
             verdict = JudgeVerdict(
                 supports=backup.supports,

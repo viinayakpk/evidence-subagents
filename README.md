@@ -1,6 +1,6 @@
 # evcarry
 
-Research harness for evidence-carrying sub-agent returns and spot-check audits. Milestones M0–M3 run here for $0 on a scripted model, on fixture tasks in-process and on real Toolathlon-Gym tasks in Docker. DeepSeek, OpenRouter, and a local vLLM server are config entries.
+Research harness for evidence-carrying sub-agent returns and spot-check audits. Milestones M0–M3 run here for $0 on a scripted model, on fixture tasks in-process and on real Toolathlon-Gym tasks in Docker. DeepSeek, OpenRouter, and a local vLLM server are config entries. The pilot and headline model is DeepSeek-V4.1-Flash-1017 through OpenRouter, pinned to DeepInfra's fp8 endpoint (`openrouter_ds_1017`); it is also the L3 judge there. Pre-pilot decisions: `docs/STATUS_pilot_ready.md`.
 
 ## Setup
 
@@ -39,19 +39,20 @@ Exit codes from `evcarry run`: spend cap `2`, weekday peak window `3`, missing A
 
 | name | kind | notes |
 | --- | --- | --- |
-| `deepseek_flash` | `deepseek` | `https://api.deepseek.com`, model id `deepseek-flash`, `DEEPSEEK_API_KEY`, billable |
+| `openrouter_ds_1017` | `openrouter` | pilot and headline model and judge: `deepseek/deepseek-v4.1-flash-1017`, `order: [deepinfra/fp8]`, `allow_fallbacks: false`, `OPENROUTER_API_KEY`, billable |
+| `deepseek_flash` | `deepseek` | `https://api.deepseek.com`, model id `deepseek-flash`, `DEEPSEEK_API_KEY`, billable (DeepSeek's own endpoint; not used by the pilot or headline) |
 | `local_primary` | `vllm` | `http://127.0.0.1:8000/v1`, `primitive-ai/Qwen3.8-Flash-Next-NVFP4`, key `EMPTY` |
 | `mock` | `scripted` | no network |
 | `openrouter_pinned` | `openrouter` | see below |
 | `free_debug` | `openai_compatible` | `FREE_DEBUG_BASE_URL`, `FREE_DEBUG_MODEL`, `FREE_DEBUG_API_KEY` |
 
-Prices are dated files in `configs/prices/`. DeepSeek off-peak is $0.15 cache-miss / $0.003 cache-hit / $0.60 output per million tokens. Peak is double, on weekdays 01:00–04:00 and 06:00–10:00 UTC, end exclusive. Weekends are off-peak. After the 2026-10-25 DST change the Prague clock labels move; the UTC windows stay put. `offpeak_only` refuses a billable run that starts inside a peak window. Mock and other non-billable models skip both the window and the cap.
+Prices are dated files in `configs/prices/`. `openrouter_ds_1017` (DeepInfra fp8, read 2026-10-24): $0.098 cache-miss / $0.00294 cache-hit / $0.294 output per million tokens, no peak windows; OpenRouter's billed `usage.cost` matched this table exactly on the probe and smoke calls. DeepSeek direct off-peak is $0.15 cache-miss / $0.003 cache-hit / $0.60 output per million tokens. Peak is double, on weekdays 01:00–04:00 and 06:00–10:00 UTC, end exclusive. Weekends are off-peak. After the 2026-10-25 DST change the Prague clock labels move; the UTC windows stay put. `offpeak_only` refuses a billable run that starts inside a peak window. Mock and other non-billable models skip both the window and the cap.
 
 Experiment files live in `configs/experiments/`. Paths are relative to the repo root. The frozen lists are `tasks/pool160.txt`, `tasks/subset70.txt`, and `tasks/pilot10.txt`, checked against `tasks/SHA256SUMS`. Seven subset70 tasks (one of them in pilot10) whose email setup cannot pass were swapped for pool160 tasks by a fixed rule; `docs/TASK_RULES.md` has the rule, the swap list, the 128-tool probe result and the delegation label (`tasks/delegation_labels.csv`). `uv run python scripts/apply_task_rules.py --check` rebuilds the lists from the seed and the rules.
 
 ## OpenRouter
 
-OpenRouter is a first-class provider, not a comment. The example entry is `openrouter_pinned`:
+OpenRouter is a first-class provider, not a comment. The pilot and headline entry is `openrouter_ds_1017` (routing `order: [deepinfra/fp8]`; DeepSeek's own OpenRouter endpoint is blocked by the account's training-data privacy setting). The older example entry is `openrouter_pinned`:
 
 - base URL `https://openrouter.ai/api/v1`
 - key `OPENROUTER_API_KEY` (empty in `.env.example`)
@@ -64,35 +65,31 @@ Each `llm_call`, `llm_error` and `judge_call` records, from the raw HTTP body: `
 
 Provider pin (`src/evcarry/providers/pin.py`): a routing with `allow_fallbacks: false` and an `order` (or `only`) list pins the provider named by each tag's first segment (`deepinfra/fp8` → `deepinfra`, compared with the response's names lower-cased and stripped to letters and digits). Every call's `provider_check` is `{"ok": true | false | null, ...}`. A call served by another provider (or, when observed, another quantization or service tier) writes a `provider_mismatch` event and a priced `llm_error`, its reply is not used, every later model call of the run refuses without a request, and the run ends without `run_end` (it is redone after a restart, its spend still counted). The grid stops with exit code `7`. A call whose provider is not observed passes and says so (`ok: null`).
 
-`configs/prices/openrouter_example_2026-10-24.yaml` copies the DeepSeek numbers so a debug budget has a figure. It is labeled example-only and is not a rate card for the paper. The headline model stays direct DeepSeek `deepseek-flash`.
+`configs/prices/openrouter_example_2026-10-24.yaml` copies the DeepSeek numbers so a debug budget has a figure. It is labeled example-only and is not a rate card for the paper. `configs/prices/openrouter_deepseek_1017_2026-10-24.yaml` is the real DeepInfra fp8 rate for `openrouter_ds_1017`.
 
-`configs/experiments/openrouter_debug.yaml` is a small pinned grid (pilot tasks, four headline arms, cap $5, schedule `any`). It uses the Docker environment and will refuse on this machine.
-
-Confirm the slug `deepseek/deepseek-chat` on OpenRouter before any paid call.
+`configs/experiments/openrouter_debug.yaml` is a small pinned grid on the example entry (pilot tasks, four headline arms, cap $5, schedule `any`). Confirm the slug `deepseek/deepseek-chat` before using it. `configs/experiments/openrouter_smoke.yaml` is the in-process smoke test of `openrouter_ds_1017` (three fixture tasks, arm `sa`, cap $1); it passed for $0.0019.
 
 ## Running M4 on the workstation
 
-Two commands. Neither is run in CI.
+Neither command is run in CI. Load the key without printing it: `set -a; source .env; set +a`.
 
-The first one stays inside this harness and the fixture tasks. It needs a DeepSeek key and refuses to start during a peak window or after the cap:
+The smoke test stays inside this harness and the fixture tasks (in-process, arm `sa`, cap $1, no Docker):
 
 ```bash
-export DEEPSEEK_API_KEY=...
-uv run evcarry run configs/experiments/deepseek_smoke.yaml
+uv run evcarry run configs/experiments/openrouter_smoke.yaml
 ```
 
-`deepseek_smoke` is in-process, arm `sa`, the three fixture tasks, cap $1, `offpeak_only`. It does not start Docker. The served model string from the response is written on every `llm_call`, because the alias `deepseek-flash` can move.
+`deepseek_smoke` is the same test against DeepSeek's own API (`DEEPSEEK_API_KEY`, `offpeak_only`).
 
 The gym pilot runs real Toolathlon-Gym tasks; see the next section. Build the images once, check the pilot's task environments, then run it:
 
 ```bash
 make gym-images                                            # ~5 min, once per gym commit
 uv run evcarry gym check --tasks tasks/pilot10.txt         # starts and stops each task environment, no model
-export DEEPSEEK_API_KEY=...
-uv run evcarry run configs/experiments/pilot_deepseek.yaml
+uv run evcarry run configs/experiments/pilot_deepseek.yaml  # openrouter_ds_1017, judge billed, cap $5
 ```
 
-Headline, when the attach exists: `make headline` (`configs/experiments/headline_deepseek.yaml`, 70 tasks, four arms, two seeds, cap $80, `offpeak_only`, eight parallel tasks, judge `local_primary` so L3 is not billed to DeepSeek). Parallel billable runs can overshoot the cap by about one batch, because the cap is checked at the start of each run.
+Headline: `make headline` (`configs/experiments/headline_deepseek.yaml`, 70 tasks, four arms, two seeds, cap $80, eight parallel tasks, `openrouter_ds_1017` as model and L3 judge, `require_frozen_prompts: true`: it refuses until `evcarry prompts freeze prompts/gym_v1` has been run after the pilot). Parallel billable runs can overshoot the cap by about one batch, because the cap is checked at the start of each run.
 
 M6 hooks, not used yet: `serving/serve_primary.sh`, `serving/serve_fallback.sh`, `serving/gpu_check.sh`, `serving/smoke_test.py` (no-op unless `--hit`).
 
@@ -127,7 +124,7 @@ The images (`scripts/build_gym_images.sh`): the gym's own Dockerfile unchanged, 
 | `evidence_random` | yes | yes | L0–L3, random sample |
 | `evidence_risk` | yes | yes | L0–L3, risk sample |
 
-The L3 judge is `judge_model` in the experiment YAML: `lexical`, or any `configs/models.yaml` key (`deepseek_flash`, `openrouter_pinned`, `local_primary`, `mock_judge`). An LLM judge gets the fixed prompt `prompts/v1/judge.md` and returns `{"verdict": "supported" | "contradicted" | "incomplete" | "unverifiable", "missing": [...], "reason": ...}`; only `supported` passes. Each call is a `judge_call` trace event (prompt and request hashes, raw reply, tokens, cost); `run_end` has `judge_calls` and `judge_cost_usd`, and a billable judge counts toward the spend cap. If a call or its parse fails, the lexical judge decides and the verdict says `lexical_fallback`.
+The L3 judge is `judge_model` in the experiment YAML: `lexical`, or any `configs/models.yaml` key (`openrouter_ds_1017` for the pilot and headline, `local_primary`, `mock_judge`, ...). An LLM judge gets the fixed prompt `prompts/v1/judge.md` and returns `{"verdict": "supported" | "contradicted" | "incomplete" | "unverifiable", "missing": [...], "reason": ...}`; only `supported` passes. Each call is a `judge_call` trace event (the claim, the full request, its hash, the raw reply, provider, tokens, cost, and the arm, return index and injected fault it belongs to); `run_end` has `judge_calls`, `judge_fallbacks` and `judge_cost_usd`, and a billable judge counts toward the spend cap. If a call or its parse fails, the lexical judge decides and the verdict says `lexical_fallback`. `scripts/judge_validation.py` exports a blind, stratified 100-claim sample for hand labels and scores the judge (agreement, kappa, precision, recall); at M6 the local model re-judges the same sample as a second judge.
 
 The arm name picks the sampler. YAML supplies the rate for the spot-check arms. L0/L1 failures reject a return even when that claim was not sampled. The policy accepts, or re-delegates once with the failed claims named, then returns a `FALLBACK` message to the main agent, which re-plans the step and delegates it again (it has no workspace tools in any delegating arm). There is no third attempt on the same call.
 
@@ -167,10 +164,10 @@ The system prompt is the arm's file under the experiment's prompt set (`prompts/
 ## Open issues
 
 - More than 128 tools: the pinned DeepInfra route accepted 150 (`docs/TASK_RULES.md`); no task was trimmed. Twelve subset70 tasks give the SA agent more than 150 tools, which is unverified.
-- The LLM judge has only been run against the scripted provider. Its omission catch rate on a real model is untested (`EVCARRY_LIVE_JUDGE=local_primary uv run pytest tests/integration/test_live_judge.py -s` once vLLM is up).
-- DeepSeek cache field names are the documented ones (`prompt_cache_hit_tokens`, `prompt_cache_miss_tokens`, plus the OpenAI details object). Confirm them on a real M4 response.
+- The LLM judge has only been run against the scripted provider. Its accuracy on a real model is unmeasured until the pilot's judged claims are hand-labelled (`scripts/judge_validation.py`).
+- On the OpenRouter/DeepInfra route, cache hits arrive as `prompt_tokens_details.cached_tokens` (the smoke run logged hits from the second call on). DeepSeek's own field names (`prompt_cache_hit_tokens`, `prompt_cache_miss_tokens`) are still unconfirmed on a real response.
 - OpenRouter omits router metadata on some cache hits, so `served_provider` can be unobserved. The trace says so instead of inventing a provider.
 - The task subset is algorithmic, not manually stratified.
 - MS-Eval prompts and the official failure taxonomy are not transcribed. Labels in `eval/label_failures.py` are provisional: `delegated_failure_propagation`, `specification_miss`, `tool_error`, `context_loss`, `other`.
-- The example OpenRouter price table is not authoritative. Confirm `deepseek/deepseek-chat` before a paid OpenRouter run. The headline model remains direct DeepSeek.
+- The example OpenRouter price table is not authoritative; the `openrouter_ds_1017` table is DeepInfra's listed rate.
 - `lerobot` / the GPU / M6 serving are untouched. `serving/gpu_check.sh` exits 0 when `nvidia-smi` is absent so CI does not fail.

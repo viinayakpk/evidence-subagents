@@ -1,5 +1,5 @@
 # First real M4 command that exercises this harness without Docker.
-# Needs OPENROUTER_API_KEY. DeepSeek V4.1 Flash 1017 via OpenRouter pinned to DeepSeek. Fixture tasks, no Docker.
+# Needs OPENROUTER_API_KEY. DeepSeek V4.1 Flash 1017 via OpenRouter pinned to DeepInfra fp8. Fixture tasks, no Docker.
 experiment: openrouter_smoke
 tasks: tests/fixtures/tasks/fixtures3.txt
 arms: [sa]

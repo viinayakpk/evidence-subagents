@@ -13,18 +13,29 @@ on the OpenAI Agents SDK, with Toolathlon-Gym as the task environment.
 - docs/plan/RESEARCH_IDEAS.md — the ranked idea list this project came from.
 
 ## Current state
-- M0–M3 done, in PR #1, branch `cursor/evidence-harness-m0-m3-3dd8`.
-- Toolathlon-Gym task containers are STUBBED (built without Docker).
-- L3 support judge is a lexical placeholder; it must be replaced by a real
-  judge model before any result counts.
+- M0–M3 in PR #1 (`cursor/evidence-harness-m0-m3-3dd8`); real gym containers and
+  the LLM L3 judge on `feat/gym-containers-l3-judge`; pilot preparation on
+  `feat/pilot-ready` (see docs/STATUS_pilot_ready.md).
+- Pilot and headline model: DeepSeek-V4.1-Flash-1017 via OpenRouter, pinned to
+  DeepInfra fp8 (`openrouter_ds_1017` in configs/models.yaml, key
+  `OPENROUTER_API_KEY`). The same entry is the L3 judge (billed, counted toward
+  the cap). Direct `deepseek_flash` is not used for paper numbers.
+- A run fails if OpenRouter serves a call from another provider (exit 7).
+- Task lists: 7 email-defect tasks swapped by a fixed rule (docs/TASK_RULES.md);
+  delegation labels in tasks/delegation_labels.csv.
+- prompts/gym_v1 is NOT frozen; the owner freezes it after the pilot
+  (`uv run evcarry prompts freeze prompts/gym_v1`). The headline refuses to run
+  until it is frozen.
 
 ## Next steps (in order)
-1. Wire the real Toolathlon-Gym containers with Docker on this machine
-   (per-task Postgres + MCP servers + network, run_parallel.sh pattern).
-2. Implement the real L3 judge (runs on the local model, never billed to API).
-3. DeepSeek smoke run: `uv run evcarry run configs/experiments/deepseek_smoke.yaml`
-   (key from env: `DEEPSEEK_API_KEY`).
-4. Local model (Qwen3.8-Flash-Next NVFP4 via vLLM) comes LAST (M6).
+1. Owner decisions listed in docs/STATUS_pilot_ready.md.
+2. Pilot (M4): `uv run evcarry run configs/experiments/pilot_deepseek.yaml`
+   (load the key with `set -a; source .env; set +a`; never print .env).
+3. Hand-label the judge sample (`scripts/judge_validation.py`), then freeze the
+   prompts.
+4. Headline (M5): `make headline`.
+5. Local model (Qwen3.8-Flash-Next NVFP4 via vLLM) comes LAST (M6); it also
+   re-judges the judge-validation sample as a second judge.
 
 ## Rules
 - Never commit API keys or secrets; read them from environment variables only.

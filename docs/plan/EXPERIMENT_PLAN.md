@@ -4,6 +4,13 @@ Source Page: https://cursor.com/canvas/store-ecb7e97a-5043-457c-9a0d-1e8b3fc2887
 
 > Low-cost plan for the paper claim: sub-agents fail silently, and replayable evidence plus risk-based spot-check audits fix most of it cheaply. Build and test the whole pipeline first (for $0 on a mock model), then run DeepSeek-V4.1-Flash-1017 for the headline (about $55 estimated), and run the local open-weight model last. Sources checked 24 Oct 2026; all costs are estimates.
 
+> **Changes since the canvas export (24 Oct 2026, branch `feat/pilot-ready`):**
+>
+> - **Headline route.** DeepSeek-V4.1-Flash-1017 is called through OpenRouter (`deepseek/deepseek-v4.1-flash-1017`), pinned to DeepInfra's fp8 endpoint with no fallbacks (`openrouter_ds_1017` in `configs/models.yaml`). DeepSeek's own endpoint is blocked by the account's training-data privacy setting. Every call logs the serving provider and generation id; a call from another provider fails the run.
+> - **L3 judge for pilot and headline.** The same `openrouter_ds_1017` model, billed and counted toward the cap (it was the local model). It is validated by 100 hand-labelled claims (`scripts/judge_validation.py`); at M6 the local model re-judges the same claims for a second-judge agreement check.
+> - **Tasks.** DeepInfra accepted 150 tools in one request, so no task is trimmed for the 128-function limit. Seven subset70 tasks whose email setup cannot pass were swapped by a fixed rule; "needs delegation" is a fixed rule over task metadata (`docs/TASK_RULES.md`).
+> - **Prompts.** `prompts/gym_v1` differs across arms only in the arm's own block; the owner freezes it after the pilot, and the headline refuses to run on an unfrozen or changed set.
+
 ## Contents
 
 - [Budget at a glance](#budget)
@@ -30,7 +37,7 @@ Source Page: https://cursor.com/canvas/store-ecb7e97a-5043-457c-9a0d-1e8b3fc2887
 
 ## Budget at a glance
 
-> **Core plan: about $55 of DeepSeek API spend (estimated range $30 to $110), plus GPU time and electricity.**
+> **Core plan: about $55 of DeepSeek API spend (estimated range $30 to $110), plus GPU time and electricity.** (Since 24 Oct: DeepSeek-V4.1-Flash-1017 via OpenRouter on DeepInfra fp8, whose rates are lower, about $35 for the headline at the assumptions below, plus a small billed L3 judge.)
 >
 > Everything is built and tested on a scripted mock model first, at no cost. DeepSeek then runs only the 4-arm headline comparison on a frozen 70-task subset with 2 seeds, in weekend batches. The local model runs last and does about 4,000 runs (ablations, audit-rate sweep, fault injection). A frontier model is an optional add-on (about $320 with Claude Sonnet 5) only if reviewers ask.
 
@@ -53,8 +60,8 @@ Source Page: https://cursor.com/canvas/store-ecb7e97a-5043-457c-9a0d-1e8b3fc2887
 
 | Item | What I found | Consequence |
 | --- | --- | --- |
-| DeepSeek 'V4.1 1017' | DeepSeek-V4.1-Flash-1017, called as model "deepseek-flash" on DeepSeek's API; legacy "deepseek-v4-flash" routes to it. | Log the served model string on every call; the alias can move. |
-| DeepSeek pricing | $0.15 input (cache miss) / $0.003 cache hit / $0.60 output per M tokens off-peak; double at peak (01:00 to 04:00 and 06:00 to 10:00 UTC on weekdays). | Run on weekends. From 25 Oct (CET) weekday peak is 02:00 to 05:00 and 07:00 to 11:00 Prague time. |
+| DeepSeek 'V4.1 1017' | DeepSeek-V4.1-Flash-1017, called as model "deepseek-flash" on DeepSeek's API; legacy "deepseek-v4-flash" routes to it. On OpenRouter: `deepseek/deepseek-v4.1-flash-1017`, served as `deepseek/deepseek-v4.1-flash-20261017`. | Log the served model string on every call; the alias can move. The pilot and headline use the OpenRouter route pinned to `deepinfra/fp8` (changed 24 Oct). |
+| DeepSeek pricing | $0.15 input (cache miss) / $0.003 cache hit / $0.60 output per M tokens off-peak; double at peak (01:00 to 04:00 and 06:00 to 10:00 UTC on weekdays). DeepInfra fp8 via OpenRouter: $0.098 / $0.00294 / $0.294, no peak pricing. | Direct API: run on weekends. The OpenRouter route has no peak windows. |
 | MS-Eval code | github.com/LINs-lab/MS-Eval returned 404 on 24 Oct 2026. | Rebuild the setup from the paper's appendix. |
 | Toolathlon-Gym | Apache-2.0. 503 tasks, 25 MCP servers, local PostgreSQL. Its run_parallel.sh gives each task its own PostgreSQL, agent container and Docker network, so parallel tasks share no state. Supports MODEL_PLATFORM=openai_compatible. | Use it as the environment layer, including its isolation scheme and evaluation scripts. |
 | Toolathlon (original) | Its agent scaffold is built on the OpenAI Agents SDK and has a decoupled mode where the agent loop runs on the host with a selectable framework. GitHub detects no license file in that repo. | Same SDK as the recommended base. Read it for reference; do not copy its code without a license. |
@@ -179,7 +186,7 @@ flowchart LR
 | Fault injector | Between the sub-agent and the checks: with a seeded probability, corrupts one claim (numeric perturbation, fabricated entity, omission, false action_done, mismatched pointer), in naive or pointer-consistent form. | Off by default; identical corruption decisions across arms for the same (task, seed, return index). |
 | L0/L1 checks | Pointer exists in the ledger, file or table; quoted span or value appears in the logged result. | Deterministic, run on every claim, no tokens. |
 | Risk-based audit sampler | Scores claims (used by a later write or the deliverable, derived or action_done, numeric, sub-agent hit limits or had errors, low confidence, failed L0/L1) and picks the top ones up to budget r; random sampler as control. | Seeded, budget-exact, unit-tested. |
-| Evidence replayer (L2) and judge (L3) | L2 re-issues read-only MCP calls through the MCP Python SDK and compares; for writes it reads back state. L3 asks the judge model whether the evidence supports the claim. | Judge runs on the local model even in DeepSeek runs, so it costs no API money and is the same for all arms. |
+| Evidence replayer (L2) and judge (L3) | L2 re-issues read-only MCP calls through the MCP Python SDK and compares; for writes it reads back state. L3 asks the judge model whether the evidence supports the claim. | Changed 24 Oct: in the pilot and headline the judge is the agent model on the same pinned route (billed, counted toward the cap), the same for all arms; it sees only the claim and its cited calls. Validated against 100 hand labels; the local model re-judges those claims at M6. |
 | Reject / re-delegate policy | Accept, or reject and re-delegate once with the failed claim and check named, then fall back to the main agent doing the sub-task. | Every decision is a trace event. |
 | Provider layer | One OpenAI-compatible client per model entry in configs/models.yaml (base_url, model, key variable, price table). Records the served model string, token usage including cache-hit counts, latency and HTTP retries for every call. | Swapping DeepSeek, free debug keys, local vLLM or the mock is a config change. Confirm DeepSeek's usage field names for cache hits in M4. |
 | Mock scripted model | Implements the Agents SDK's Model interface and replays scripted responses (tool calls, sub-agent returns, malformed JSON) from fixture files. | Lets the whole pipeline, including the real Toolathlon-Gym tools, run for $0 in tests. |
@@ -265,16 +272,18 @@ experiment: headline_deepseek_v1
 tasks: tasks/subset70.txt          # sha256 checked at start
 arms: [sa, vanilla_mad, self_verify, evidence_risk]
 seeds: [1, 2]
-model: deepseek_flash              # key in configs/models.yaml
+model: openrouter_ds_1017          # key in configs/models.yaml (changed 24 Oct; was deepseek_flash)
 audit: {sampler: risk, rate: 0.3, checks: [L0, L1, L2, L3]}
-judge_model: local_primary         # L3 + labeling never billed to the API
+judge_model: openrouter_ds_1017    # billed, counted toward the cap (changed 24 Oct; was local_primary)
 limits: {max_steps: 100, max_seconds: 7200, context: 131072}
-prompts: prompts/v1/               # frozen, byte-identical system prompt first
+prompts: prompts/gym_v1/           # frozen after the pilot, byte-identical system prompt first
+require_frozen_prompts: true
 budget: {cap_usd: 80, schedule: offpeak_only}
 parallel_tasks: 8
 out: runs/headline_deepseek_v1/
 
 # configs/models.yaml
+openrouter_ds_1017: {kind: openrouter, base_url: https://openrouter.ai/api/v1, model: deepseek/deepseek-v4.1-flash-1017, api_key_env: OPENROUTER_API_KEY, routing: {order: [deepinfra/fp8], allow_fallbacks: false}, prices: prices/openrouter_deepseek_1017_2026-10-24.yaml}
 deepseek_flash: {base_url: https://api.deepseek.com, model: deepseek-flash, api_key_env: DEEPSEEK_API_KEY, prices: prices/deepseek_2026-10-24.yaml}
 local_primary: {base_url: http://127.0.0.1:8000/v1, model: primitive-ai/Qwen3.8-Flash-Next-NVFP4, api_key_env: NONE}
 mock: {provider: scripted, script_dir: tests/fixtures/scripts/}
@@ -308,9 +317,9 @@ mock: {provider: scripted, script_dir: tests/fixtures/scripts/}
 | M1 Harness on mock provider | Provider layer, scripted mock Model, ledger, SA and vanilla MAD arms, JSONL traces, run manager with resume. Debug against real models with free keys only. | SA and vanilla MAD run end to end on mock and on 3 real Toolathlon-Gym tasks with scripted tool calls; traces complete; resume test passes. | About 1 week | $0 |
 | M2 Schema, replayer and audit on mock | Claim schema, L0 to L3, sampler, policy, self-verify and typed-contract arms. Freeze the 70-task subset and the 160-task pool. | All unit tests above pass; corrupted-return integration test passes; subset70.txt committed with hash. | About 1 week | $0 |
 | M3 Fault injector | Five corruption types, two variants, seeded; analysis notebooks drafted on mock traces. | Injector unit tests pass; mock fault-injection run produces catch-rate numbers in 03_fault_injection.ipynb. | 3 to 4 evenings | $0 |
-| M4 DeepSeek pilot | 40 runs: 10 tasks from the frozen subset, 4 arms, 1 seed, on a weekend. Fixed prompts for cache hits. | Under 5% harness errors; measured $ per run and cache-hit rate recorded; cost table and cap updated. | 1 weekend | About $4 |
-| M5 DeepSeek headline | 560 runs: 70 tasks, 4 arms, 2 seeds, one seed per weekend. | All runs finished or explained; headline table and flip rates computed; spend under the cap. | 2 weekends | About $50 |
-| M6 Local model, last | Confirm with Vinayak, then stop the lerobot process (PID 2046889) and check nvidia-smi shows the GPU empty. Pull the vllm/vllm-openai:qwen38-flash-next image, serve the primary model, run the smoke test (20 tool-calling tasks at 128K context), measure throughput. Then core grid, audit-rate sweep, fault injection, and L3 judging and failure labeling for all runs. | Smoke test passes within 3 days (else switch to Qwen3.8-27B FP8); all local runs finished; labels done. | About 2 weeks (5 to 10 GPU days) | $0 API; electricity |
+| M4 DeepSeek pilot | 40 runs: 10 tasks from the frozen subset, 4 arms, 1 seed. DeepSeek-V4.1-Flash-1017 via OpenRouter (DeepInfra fp8), also the L3 judge. Fixed prompts for cache hits; hand-label the judge sample, then freeze the prompts. | Under 5% harness errors; measured $ per run and cache-hit rate recorded; cost table and cap updated. | 1 weekend | About $4 |
+| M5 DeepSeek headline | 560 runs: 70 tasks, 4 arms, 2 seeds, same route and judge as M4, frozen prompts. | All runs finished or explained; headline table and flip rates computed; spend under the cap. | 2 weekends | About $50 |
+| M6 Local model, last | Confirm with Vinayak, then stop the lerobot process (PID 2046889) and check nvidia-smi shows the GPU empty. Pull the vllm/vllm-openai:qwen38-flash-next image, serve the primary model, run the smoke test (20 tool-calling tasks at 128K context), measure throughput. Then core grid, audit-rate sweep, fault injection, and L3 judging and failure labeling for all runs; re-judge the 100-claim judge-validation sample with the local model (second-judge agreement with the headline judge). | Smoke test passes within 3 days (else switch to Qwen3.8-27B FP8); all local runs finished; labels done. | About 2 weeks (5 to 10 GPU days) | $0 API; electricity |
 
 <a id="local"></a>
 
@@ -348,7 +357,7 @@ MS-Eval (Oct 2026) pairs each sub-agent run with a single-agent run on the same 
 | L0 existence | Every pointer resolves to a real ledger entry, file or row. | Free |
 | L1 content match | Quoted span or value appears in the logged result. | Free |
 | L2 replay | Re-run read-only call or re-read file or row; read back state for writes. | One tool call |
-| L3 support | Judge model: does the evidence support the claim? Always the local model. | Local GPU time |
+| L3 support | Judge model: does the evidence support the claim? Pilot and headline: the agent model on the pinned OpenRouter route; M6: the local model. | A few API cents per run (headline); local GPU time (M6) |
 
 - **Default policy:** L0 and L1 on every claim; L2 and L3 on sampled claims.
 - **Risk-based sampler:** Features: used by a later write or the deliverable; derived or action_done; numeric; sub-agent hit limits, had errors or finished very fast; low confidence; failed L0/L1. Random sampler at equal budget is the control.
@@ -372,8 +381,8 @@ MS-Eval (Oct 2026) pairs each sub-agent run with a single-agent run on the same 
 | Block | Milestone | Model | Tasks | Arms | Seeds | Runs | API cost (est.) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Pipeline tests | M1 to M3 | Mock | fixtures + 3 real tasks | all | - | many | $0 |
-| DeepSeek pilot | M4 | deepseek-flash | 10 of the frozen 70 | 4 (SA, vanilla, self-verify, evidence + risk) | 1 | 40 | about $4 |
-| Headline comparison | M5 | deepseek-flash | 70 frozen | 4 | 2 | 560 | about $50 |
+| DeepSeek pilot | M4 | DeepSeek-V4.1-Flash-1017 (OpenRouter, DeepInfra fp8) | 10 of the frozen 70 | 4 (SA, vanilla, self-verify, evidence + risk) | 1 | 40 | about $3 |
+| Headline comparison | M5 | same | 70 frozen | 4 | 2 | 560 | about $35 |
 | Local smoke and dev | M6 | Local | 10 to 20 | as needed | - | about 300 | $0 |
 | Local core grid | M6 | Local | about 160 | 7 | 2 | 2,240 | $0 |
 | Audit-rate sweep | M6 | Local | 89 delegation-needed | 6 | 1 | 534 | $0 |
@@ -398,6 +407,7 @@ MS-Eval (Oct 2026) pairs each sub-agent run with a single-agent run on the same 
 | Success-to-failure flip rate | (task, seed) pairs SA solves and the arm fails; also failure-to-success and net. |
 | Delegated failure propagation rate | Flips labeled with MS-Eval's taxonomy, 50 checked by hand (Cohen's kappa). |
 | Corrupted-claim catch rate | Injected corruptions rejected before use, with false-reject rate on clean claims. |
+| Judge validity | L3 verdicts against 100 hand labels (stratified: faults, clean claims judged supported and unsupported): agreement, Cohen's kappa, precision and recall for flagging unsupported claims; at M6, agreement between the headline judge and the local judge on the same claims. |
 | Overhead | Extra $ (DeepSeek) and tokens and critical steps (all models) versus vanilla MAD. |
 | Reliability-per-dollar curve | x = cost per task, y = success rate and 1 minus flip rate; one point per arm and audit rate. |
 
@@ -409,7 +419,7 @@ MS-Eval (Oct 2026) pairs each sub-agent run with a single-agent run on the same 
 2. H1/H2 on DeepSeek (headline) and the local model; H3/H4 on the local model.
 3. McNemar tests per task; bootstrap 95% intervals; mixed-effects logistic regression as a robustness check.
 4. Fault-injection results per corruption type; error analysis of every unprevented flip; cost decomposition.
-5. Threats: few natural flips on 70 tasks, local-model judge, one benchmark family, alias drift, community quantization.
+5. Threats: few natural flips on 70 tasks, the headline judge is the agent model itself (checked against hand labels and a second, local judge), one benchmark family, alias drift, provider quantization (pinned to DeepInfra fp8 and logged per call), community quantization of the local model.
 
 <a id="cost"></a>
 
@@ -419,8 +429,9 @@ MS-Eval (Oct 2026) pairs each sub-agent run with a single-agent run on the same 
 
 | Item | Price used | Per-run math | Runs | Estimated total |
 | --- | --- | --- | --- | --- |
-| DeepSeek pilot + headline | $0.15 miss / $0.003 hit / $0.60 output per M (off-peak) | $0.060 + $0.005 + $0.024 = $0.089 | 600 | about $53; range $30 to $110 |
-| Mock tests, L3 judge, labeling | - | - | - | $0 API |
+| DeepSeek pilot + headline (direct API, original plan) | $0.15 miss / $0.003 hit / $0.60 output per M (off-peak) | $0.060 + $0.005 + $0.024 = $0.089 | 600 | about $53; range $30 to $110 |
+| DeepSeek-V4.1-Flash-1017 via OpenRouter, DeepInfra fp8 (used since 24 Oct) | $0.098 miss / $0.00294 hit / $0.294 output per M, no peak | $0.039 + $0.005 + $0.012 = $0.056 | 600 | about $34, plus the L3 judge (well under $0.01 per judged claim) |
+| Mock tests, M6 judging, labeling | - | - | - | $0 API |
 | Local runs (M6) | GPU time, electricity | About 160M output tokens; 2 to 4 days of pure decoding at measured batch speeds | about 4,000 | 5 to 10 GPU days; at an assumed 0.6 kW, 8 days is about 115 kWh |
 | Optional Claude Sonnet 5 | $2 / $0.20 / $10 per M | about $1.52 | 210 | about $320 |
 | Optional GPT-5.6-Sol | $4 / $0.40 / $20 per M (MS-Eval table) | about $3.04 | 210 | about $640 |

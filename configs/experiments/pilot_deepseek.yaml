@@ -1,10 +1,13 @@
+# DeepSeek-V4.1-Flash-1017 through OpenRouter, pinned to DeepInfra's fp8 endpoint (openrouter_ds_1017).
+# The L3 judge is the same model: billed, and counted toward the cap. Needs OPENROUTER_API_KEY.
+# The OpenRouter price table has no peak windows; offpeak_only matters only if the model is switched back to deepseek_flash.
 experiment: pilot_deepseek
 tasks: tasks/pilot10.txt
 arms: [sa, vanilla_mad, self_verify, evidence_risk]
 seeds: [1]
-model: deepseek_flash
+model: openrouter_ds_1017
 audit: {sampler: risk, rate: 0.3, checks: [L0, L1, L2, L3]}
-judge_model: lexical
+judge_model: openrouter_ds_1017
 limits: {max_steps: 100, max_seconds: 7200, context: 131072}
 prompts: prompts/gym_v1
 budget: {cap_usd: 5, schedule: offpeak_only}

@@ -72,7 +72,7 @@ def test_experiment_config_rejects_typos(tmp_path) -> None:
     base = (Path(__file__).resolve().parents[2] / "configs/experiments/pilot_deepseek.yaml").read_text(encoding="utf-8")
     for broken in (
         base.replace("schedule: offpeak_only", "schedule: offpeak-only"),
-        base.replace("judge_model: lexical", "judge_modle: local_primary"),
+        base.replace("judge_model: openrouter_ds_1017", "judge_modle: openrouter_ds_1017"),
         base.replace("sampler: risk", "sampler: riks"),
     ):
         assert broken != base

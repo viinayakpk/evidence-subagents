@@ -1,4 +1,5 @@
-# Pinned OpenRouter debug grid. Not the headline model. Cap is a small example.
+# Pinned OpenRouter debug grid on the example entry openrouter_pinned (deepseek/deepseek-chat).
+# Not the headline route (that is openrouter_ds_1017). Cap is a small example.
 # Needs OPENROUTER_API_KEY. Refuses until Docker is enabled, same as the pilot.
 experiment: openrouter_debug
 tasks: tasks/pilot10.txt

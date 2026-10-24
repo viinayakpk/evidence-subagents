@@ -182,15 +182,16 @@ def test_cli_dry_run_and_exit_codes(capsys, monkeypatch) -> None:
     assert "run_parallel.sh" in headline
     assert "not called" in headline
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with pytest.raises(SystemExit) as missing:
         main(["run", "configs/experiments/deepseek_smoke.yaml"])
     assert missing.value.code == 4
     with pytest.raises(SystemExit) as missing_gym:
-        main(["run", "configs/experiments/pilot_deepseek.yaml"])
+        main(["run", "configs/experiments/pilot_deepseek.yaml"])  # OpenRouter route: needs OPENROUTER_API_KEY
     assert missing_gym.value.code == 4
     # The key check passes with a placeholder; the Docker preflight then refuses
     # before any run starts, so nothing is sent to the provider.
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "placeholder-not-a-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "placeholder-not-a-key")
     monkeypatch.setenv("EVCARRY_DOCKER", "/nonexistent/docker")
     with pytest.raises(SystemExit) as docker:
         main(["run", "configs/experiments/pilot_deepseek.yaml"])

@@ -110,6 +110,7 @@ async def test_llm_judge_falls_back_to_lexical() -> None:
     assert supported.source == "lexical_fallback" and supported.supports is True
     assert "ConnectionError: endpoint down" in supported.detail["error"]
     assert broken.calls == 1 and broken.cost_usd == 0
+    assert broken.fallbacks == 1 and garbage.fallbacks == 1  # run_end reports judge_fallbacks
 
 
 def test_build_judge_routes_through_the_provider_layer(monkeypatch) -> None:
