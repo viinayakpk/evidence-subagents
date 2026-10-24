@@ -143,3 +143,17 @@ def test_no_real_keys_in_repo(monkeypatch) -> None:
     # monkeypatch restores the variable; a bare os.environ write leaked into later tests.
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-real")
     assert os.environ["OPENROUTER_API_KEY"] == "test-not-real"
+
+
+def test_an_empty_peak_window_list_means_no_peak() -> None:
+    """[] was read as 'not set' and replaced by DeepSeek's windows, so the OpenRouter pilot refused weekday mornings."""
+    from datetime import datetime, timezone
+
+    from evcarry.runs.budget import BudgetGuard
+
+    price = load_models()["openrouter_ds_1017"].price_table()
+    assert price.peak_windows_utc == ()
+    weekday_peak = datetime(2026, 10, 27, 7, 0, tzinfo=timezone.utc)  # a Tuesday, inside DeepSeek's peak
+    assert not is_peak(weekday_peak, price)
+    BudgetGuard(cap_usd=5, schedule="offpeak_only", price=price).check(billable=True, now=weekday_peak)
+    assert is_peak(weekday_peak, load_models()["deepseek_flash"].price_table())

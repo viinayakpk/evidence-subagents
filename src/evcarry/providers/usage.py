@@ -46,7 +46,9 @@ class PriceTable:
     def from_mapping(cls, data: dict[str, Any]) -> PriceTable:
         per = data.get("per_million_tokens") or data
         windows = []
-        for start, end in data.get("peak_windows_utc") or [["01:00", "04:00"], ["06:00", "10:00"]]:
+        # An explicit empty list means no peak windows (OpenRouter); only a missing key gets DeepSeek's.
+        raw_windows = data["peak_windows_utc"] if data.get("peak_windows_utc") is not None else [["01:00", "04:00"], ["06:00", "10:00"]]
+        for start, end in raw_windows:
             windows.append((_parse_hhmm(start), _parse_hhmm(end)))
         return cls(
             input_cache_miss=float(per["input_cache_miss"]),
