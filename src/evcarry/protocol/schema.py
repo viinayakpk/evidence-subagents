@@ -6,6 +6,7 @@ one repair attempt; a second failure is a failed return.
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
@@ -81,6 +82,30 @@ def export_json_schema() -> dict[str, Any]:
     return SubagentReturn.model_json_schema()
 
 
+_FENCED = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL)
+
+
+def _validate(text: str) -> SubagentReturn:
+    """Validate the text, else the JSON object inside a code fence or surrounding prose.
+
+    Models asked for JSON in the prompt (no response_format) often wrap it in
+    ```json fences; that is a formatting slip, not a schema failure, and costs no repair.
+    """
+    try:
+        return _RETURN_ADAPTER.validate_json(text)
+    except ValidationError as first:
+        candidates = [match.group(1) for match in _FENCED.finditer(text)]
+        start, end = text.find("{"), text.rfind("}")
+        if 0 <= start < end:
+            candidates.append(text[start : end + 1])
+        for candidate in candidates:
+            try:
+                return _RETURN_ADAPTER.validate_json(candidate)
+            except ValidationError:
+                continue
+        raise first
+
+
 def parse_subagent_return(
     payload: str | bytes,
     repair: Any | None = None,
@@ -91,7 +116,7 @@ def parse_subagent_return(
     """
     text = payload.decode() if isinstance(payload, bytes) else payload
     try:
-        return _RETURN_ADAPTER.validate_json(text), 0
+        return _validate(text), 0
     except ValidationError as first:
         if repair is None:
             raise FailedReturn(str(first), repairs=0) from first
@@ -99,6 +124,6 @@ def parse_subagent_return(
         if not isinstance(repaired, str):
             raise FailedReturn("Repair callback did not return a string.", repairs=1)
         try:
-            return _RETURN_ADAPTER.validate_json(repaired), 1
+            return _validate(repaired), 1
         except ValidationError as second:
             raise FailedReturn(str(second), repairs=1) from second

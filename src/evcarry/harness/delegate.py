@@ -2,7 +2,8 @@
 
 The first nested run is the ``as_tool`` invocation. This extractor reviews that
 result. On ``redelegate`` it calls ``Runner.run`` once more on the same agent,
-which continues that agent's scripted queue. There is no third attempt.
+continuing that run's conversation with the feedback (and, for the scripted
+model, its queue). There is no third attempt.
 
 Strict ``output_type`` rejects invalid JSON inside the SDK before this
 extractor runs. The one-repair guarantee for a string return lives here and in
@@ -38,14 +39,24 @@ def _as_text(output: object) -> str:
     return json.dumps(output, default=str)
 
 
-async def _coerce(run_result: Any, agent: Any, hooks: LedgerHooks, max_turns: int) -> SubagentReturn:
+def _continued(run_result: Any, message: str) -> list[Any]:
+    """The sub-agent's own conversation (instruction, tool calls, reply) plus one new user message.
+
+    A repair or re-delegation that sends only ``message`` starts a fresh run in which
+    the sub-agent no longer knows what it was asked to do.
+    """
+    return [*run_result.to_input_list(), {"role": "user", "content": message}]
+
+
+async def _coerce(run_result: Any, agent: Any, hooks: LedgerHooks, max_turns: int) -> tuple[SubagentReturn, Any]:
+    """The parsed return and the run it came from (the repair run when one was needed)."""
     output = run_result.final_output
     if isinstance(output, SubagentReturn):
-        return output
+        return output, run_result
     text = _as_text(output)
     try:
         parsed, _repairs = parse_subagent_return(text)
-        return parsed
+        return parsed, run_result
     except FailedReturn as first:
         repair_prompt = (
             "The previous structured return did not match the schema. "
@@ -53,13 +64,13 @@ async def _coerce(run_result: Any, agent: Any, hooks: LedgerHooks, max_turns: in
         )
         repaired = await Runner.run(
             agent,
-            repair_prompt,
+            _continued(run_result, repair_prompt),
             hooks=hooks,
             max_turns=max_turns,
             run_config=RunConfig(tracing_disabled=True),
         )
         parsed, _repairs = parse_subagent_return(_as_text(repaired.final_output))
-        return parsed
+        return parsed, repaired
 
 
 def make_extractor(
@@ -82,7 +93,7 @@ def make_extractor(
     judge: Any = None,
 ):
     async def _review(run_result: Any, prior: int) -> str:
-        payload = await _coerce(run_result, agent, hooks, max_turns)
+        payload, run_result = await _coerce(run_result, agent, hooks, max_turns)
         index = state.return_index
         state.return_index += 1
         decision_inject = None
@@ -126,7 +137,7 @@ def make_extractor(
         if policy.action == "redelegate":
             second = await Runner.run(
                 agent,
-                feedback_message(policy),
+                _continued(run_result, feedback_message(policy)),
                 hooks=hooks,
                 max_turns=max_turns,
                 run_config=RunConfig(tracing_disabled=True),
