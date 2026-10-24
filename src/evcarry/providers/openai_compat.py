@@ -37,9 +37,10 @@ _HTTP_BODIES: ContextVar[list[dict[str, Any]] | None] = ContextVar("evcarry_http
 
 # Waits between attempts of one model call after a 429, a 5xx or a dropped connection. Each attempt
 # is the OpenAI client's request with its own two quick retries (about 4 s); DeepInfra's shared pool
-# answers "engine_overloaded" 429s for longer than that (first pilot relaunch, 2026-10-24). Unanswered
-# requests are not billed. The same for every arm and for the judge.
-RETRY_WAITS_S: tuple[float, ...] = (5.0, 15.0, 30.0, 60.0, 120.0)
+# answered "engine_overloaded" 429s for minutes at a time during the pilot (2026-10-24), and a run that
+# fails mid-way is redone from scratch, so a call waits up to about 13 minutes. Unanswered requests are
+# not billed. The same for every arm and for the judge.
+RETRY_WAITS_S: tuple[float, ...] = (5.0, 15.0, 30.0, 60.0, 120.0, 240.0, 300.0)
 _RETRYABLE = (RateLimitError, InternalServerError, APIConnectionError)
 
 _ROUTING_KEYS = (
