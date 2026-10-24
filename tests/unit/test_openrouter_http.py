@@ -180,7 +180,7 @@ def test_every_agent_of_every_arm_is_built_with_temperature_zero() -> None:
         main = build_main_agent(
             arm=arm, task="fixture-sections", seed=1, prompts_dir="prompts/v1", model_config=load_models()["mock"],
             script=None, toolset=toolset, hooks=hooks, writer=_Writer(), ledger=ledger, checks=arm.checks,
-            sampler=arm.sampler, rate=arm.default_rate, injector=None, max_turns=5,
+            sampler=arm.sampler, rate=arm.default_rate, injector=None, subagent_max_turns=5,
         )
         assert main.model_settings.temperature == 0.0, arm.name
         nested_agents = [tool._agent_instance for tool in main.tools if getattr(tool, "_agent_instance", None)]

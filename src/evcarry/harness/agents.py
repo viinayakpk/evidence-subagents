@@ -88,7 +88,7 @@ def build_main_agent(
     sampler: str | None,
     rate: float,
     injector: FaultInjector | None,
-    max_turns: int,
+    subagent_max_turns: int,
     judge: Any = None,
 ) -> Agent:
     caller = toolset.caller
@@ -137,7 +137,7 @@ def build_main_agent(
                 require_evidence=arm.require_evidence,
                 injector=injector,
                 state=state,
-                max_turns=max_turns,
+                max_turns=subagent_max_turns,
                 judge=judge,
                 prompts_dir=prompts_dir,
                 session=session,
@@ -148,8 +148,8 @@ def build_main_agent(
                 tool_description=SUBAGENT_TOOL_DESCRIPTIONS[name],
                 custom_output_extractor=extractor,
                 hooks=hooks,
-                # The SDK default is 10 turns per nested run, far below a gym task's budget.
-                max_turns=max_turns,
+                # Per nested run (owner decision 5: 40 in the pilot and headline, every arm). The SDK default is 10.
+                max_turns=subagent_max_turns,
                 run_config=harness_run_config(),
                 session=session,
                 failure_error_function=_logged_failure(writer, name),

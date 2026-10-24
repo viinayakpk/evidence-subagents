@@ -8,10 +8,12 @@ seeds: [1, 2]
 model: openrouter_ds_1017
 audit: {sampler: risk, rate: 0.3, checks: [L0, L1, L2, L3]}
 judge_model: openrouter_ds_1017
-limits: {max_steps: 100, max_seconds: 7200, context: 131072}
+# Owner decision 5: main agent and every sub-agent run at most 40 turns, every arm.
+limits: {max_steps: 40, subagent_max_turns: 40, max_seconds: 7200, context: 131072}
 prompts: prompts/gym_v1
 require_frozen_prompts: true
-budget: {cap_usd: 45, schedule: offpeak_only}  # owner ceiling: $50 total with the $5 pilot
+# A run whose spend (agent + judge) reaches $0.25 is stopped: status cost_ceiling, counted as failed.
+budget: {cap_usd: 45, run_ceiling_usd: 0.25, schedule: offpeak_only}  # owner ceiling: $50 total with the $5 pilot
 parallel_tasks: 8
 out: runs/headline_deepseek_v1
 environment: docker

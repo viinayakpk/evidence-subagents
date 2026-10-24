@@ -389,8 +389,11 @@ def test_final_verdict() -> None:
     from evcarry.runs.manager import final_verdict
 
     hit = [{"call_id": "c", "tool": "t", "markers": "eigent-ai"}]
-    assert final_verdict({"passed": True}) == {"eval_passed": True, "contaminated": False, "passed": True}
+    assert final_verdict({"passed": True}) == {"eval_passed": True, "contaminated": False, "passed": True, "cost_ceiling": False}
     assert final_verdict({"passed": True, "ground_truth_suspects": hit})["passed"] is False
     assert final_verdict({"passed": False, "ground_truth_suspects": hit})["passed"] is False
     assert final_verdict({"passed": None, "ground_truth_suspects": hit})["passed"] is None  # not graded stays not graded
     assert final_verdict({"passed": True, "ground_truth_suspects": []})["contaminated"] is False
+    # A refused call at the per-run ceiling fails the run even if the main agent finished and passed.
+    stopped = final_verdict({"passed": True, "status": "ok"}, ceiling_hit=True)
+    assert (stopped["passed"], stopped["status"], stopped["cost_ceiling"], stopped["eval_passed"]) == (False, "cost_ceiling", True, True)

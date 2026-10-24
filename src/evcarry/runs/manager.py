@@ -1,10 +1,13 @@
 """Expand an experiment grid, resume finished runs, and write JSONL traces.
 
-Parallel billable runs check the spend cap before they start and add cost
-after they finish, so they can overshoot the cap by about one batch.
-Off-peak is checked at the start of each run, not mid-run. The cap counts
-everything already logged in the output directory, including earlier
-invocations and aborted runs (kept as ``*.jsonl.aborted-<n>``).
+Billable runs check the spend cap before they start. With a per-run cost
+ceiling (``budget.run_ceiling_usd``) the check reserves the ceiling for every
+run in flight, so parallel runs cannot overshoot the cap by a batch; each
+run's meter refuses its model calls at the ceiling, and every run's calls at
+the cap (``evcarry.runs.budget``). Off-peak is checked at the start of each
+run, not mid-run. The cap counts everything already logged in the output
+directory, including earlier invocations and aborted runs (kept as
+``*.jsonl.aborted-<n>``), and every run in flight as it spends.
 
 ``environment: in_process`` runs the fixture tasks against the in-process
 fake MCP server. ``environment: docker`` runs real Toolathlon-Gym tasks, one
@@ -43,7 +46,15 @@ from evcarry.paths import repo_root, resolve_repo_path
 from evcarry.protocol.judge import build_judge
 from evcarry.providers.pin import PinGuard, current_pin_guard
 from evcarry.providers.registry import load_models, resolve_api_key
-from evcarry.runs.budget import BudgetError, BudgetGuard
+from evcarry.runs.budget import (
+    _SPEND_EVENTS,
+    BudgetError,
+    BudgetGuard,
+    CostCeilingExceeded,
+    RunMeter,
+    current_run_meter,
+    event_spend,
+)
 from evcarry.runs.config import ExperimentConfig
 from evcarry.trace.index import write_index
 from evcarry.trace.processor import JsonlTraceProcessor
@@ -128,23 +139,6 @@ def load_script_file(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-_SPEND_EVENTS = ("llm_call", "judge_call", "llm_error")
-
-
-def event_spend(event: dict[str, Any]) -> float:
-    """Dollars one trace event spent, for the cap: the larger of the price-table cost and the provider's bill.
-
-    ``llm_error`` counts too: a call that was answered and then failed in the SDK
-    was billed. The larger figure keeps a price change or an unexpected endpoint
-    tier from letting the cap under-count.
-    """
-    if event.get("type") not in _SPEND_EVENTS:
-        return 0.0
-    table = float(event.get("cost_usd") or 0)
-    reported = event.get("provider_reported_cost_usd")
-    return max(table, float(reported)) if isinstance(reported, (int, float)) else table
-
-
 def trace_spend(path: Path) -> float:
     total = 0.0
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -193,6 +187,9 @@ def dry_run_report(config: ExperimentConfig) -> str:
         f"environment: {config.environment}",
         f"schedule: {config.budget.schedule}",
         f"cap_usd: {config.budget.cap_usd}",
+        f"run_ceiling_usd: {config.budget.run_ceiling_usd}",
+        f"max_steps (main agent): {config.limits.max_steps}",
+        f"subagent_max_turns: {subagent_turns(config)}",
         f"parallel_tasks: {config.parallel_tasks}",
         f"prompts: {config.prompts} {_prompt_state(config)}",
         "grid:",
@@ -229,8 +226,12 @@ def _gym_images(config: ExperimentConfig):
     )
 
 
+def subagent_turns(config: ExperimentConfig) -> int:
+    return config.limits.subagent_max_turns or config.limits.max_steps
+
+
 async def _drive(agent: Any, text: str, hooks: LedgerHooks, config: ExperimentConfig) -> dict[str, Any]:
-    """Run the main agent. Turn and time limits end the run; other errors propagate."""
+    """Run the main agent. Turn, time and per-run cost limits end the run; other errors propagate."""
     try:
         result = await asyncio.wait_for(
             Runner.run(
@@ -246,7 +247,13 @@ async def _drive(agent: Any, text: str, hooks: LedgerHooks, config: ExperimentCo
         return {"agent_status": "max_turns_reached"}
     except TimeoutError:
         return {"agent_status": "timeout"}
+    except CostCeilingExceeded:
+        return {"agent_status": "cost_ceiling"}
     return {"agent_status": "completed", "final_output": str(result.final_output)[-2000:]}
+
+
+# A run stopped at its cost ceiling is not graded: it counts as failed (owner decision 5).
+_NOT_GRADED_AT_CEILING = {"status": "cost_ceiling", "passed": False, "eval_ran": False}
 
 
 async def _run_fixture(
@@ -266,6 +273,8 @@ async def _run_fixture(
         hooks = LedgerHooks(ledger, writer, price, toolset.catalog)
         agent = build(toolset=toolset, hooks=hooks, ledger=ledger)
         outcome = await _drive(agent, task.task_text, hooks, config)
+    if outcome["agent_status"] == "cost_ceiling":
+        return {**outcome, **_NOT_GRADED_AT_CEILING}
     evaluation = evaluate_task(task, workspace)
     return {**outcome, "passed": evaluation.get("passed"), "status": evaluation.get("status")}
 
@@ -343,7 +352,10 @@ async def _run_gym(
         hooks = LedgerHooks(ledger, writer, price, catalog)
         agent = build(toolset=toolset, hooks=hooks, ledger=ledger)
         outcome = await _drive(agent, task.task_text, hooks, config)
-        evaluation = await env.evaluate()
+        if outcome["agent_status"] == "cost_ceiling":
+            evaluation = dict(_NOT_GRADED_AT_CEILING)
+        else:
+            evaluation = await env.evaluate()
         if gym.export_workspace:
             await env.export_workspace(out_dir / "workspaces" / stem)
     finally:
@@ -372,8 +384,10 @@ async def _run_one(
     model_config: Any,
     price: Any,
     prompt_status: dict[str, object] | None = None,
+    meter: RunMeter | None = None,
 ) -> float:
     _install_trace_processors()
+    meter = meter or RunMeter(config.budget.run_ceiling_usd)
     spec = arm_spec(arm_name)
     checks, sampler, rate = effective_audit(
         arm_name,
@@ -387,10 +401,11 @@ async def _run_one(
     stem = f"{task_name}__{arm_name}__{seed}"
     if path.exists() and not has_run_end(path):
         _set_aside(path)
-    writer = JsonlWriter(path)
+    writer = JsonlWriter(path, observer=meter.observe)
     token = current_writer.set(writer)
     pin_guard = PinGuard()
     pin_token = current_pin_guard.set(pin_guard)
+    meter_token = current_run_meter.set(meter)
     try:
         prompt_file = prompt_path(config.prompts, arm_name)
         routing = model_config.routing
@@ -419,6 +434,9 @@ async def _run_one(
                 # Sent on every agent and judge call of every arm (llm_call/judge_call log what each request carried).
                 "temperature": TEMPERATURE,
                 "judge_temperature": TEMPERATURE,
+                "max_steps": config.limits.max_steps,
+                "subagent_max_turns": subagent_turns(config),
+                "run_ceiling_usd": meter.ceiling_usd,
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
         )
@@ -448,7 +466,7 @@ async def _run_one(
                 sampler=sampler,
                 rate=rate,
                 injector=injector,
-                max_turns=config.limits.max_steps,
+                subagent_max_turns=subagent_turns(config),
                 judge=judge,
             )
 
@@ -458,7 +476,9 @@ async def _run_one(
         )
         # A sub-agent tool or the judge may have caught the mismatch; the run still fails, without run_end.
         pin_guard.raise_if_violated()
-        verdict = final_verdict(outcome)
+        # A call refused at the experiment cap fails the run without run_end, like a pin violation.
+        meter.raise_if_cap_reached()
+        verdict = final_verdict(outcome, ceiling_hit=meter.ceiling_hit)
         events = read_events(path)
         input_tokens = 0
         output_tokens = 0
@@ -507,23 +527,31 @@ async def _run_one(
         writer.write({"type": "run_error", "error_type": type(exc).__name__, "error": str(exc)[:2000]})
         raise
     finally:
+        current_run_meter.reset(meter_token)
         current_pin_guard.reset(pin_token)
         current_writer.reset(token)
         writer.close()
 
 
-def final_verdict(outcome: dict[str, Any]) -> dict[str, Any]:
+def final_verdict(outcome: dict[str, Any], *, ceiling_hit: bool = False) -> dict[str, Any]:
     """``passed`` as the paper counts it, next to the grader's own ``eval_passed``.
 
     Pre-registered (owner decision 4, 2026-10-24): a run whose tool calls reached for
     ground truth (``ground_truth_suspects``: removed task files, the gym's git history,
     or its public repo) is ``contaminated`` and counts as a failure, whatever the
     grader said. An ungraded run (``passed: null``) stays ungraded.
+
+    Owner decision 5: a run in which any model call was refused at the per-run cost
+    ceiling has status ``cost_ceiling`` and counts as failed, even if the main agent
+    went on to finish (a sub-agent or judge call was cut short).
     """
     eval_passed = outcome.get("passed")
     contaminated = bool(outcome.get("ground_truth_suspects"))
     passed = False if contaminated and eval_passed is not None else eval_passed
-    return {"eval_passed": eval_passed, "contaminated": contaminated, "passed": passed}
+    verdict: dict[str, Any] = {"eval_passed": eval_passed, "contaminated": contaminated, "passed": passed, "cost_ceiling": ceiling_hit}
+    if ceiling_hit:
+        verdict.update(passed=False, status="cost_ceiling")
+    return verdict
 
 
 def _script_for(arm_name: str, overrides: dict[str, Path] | None, model_kind: str, script_dir: str) -> dict[str, Any] | None:
@@ -566,6 +594,7 @@ async def run_experiment(
         schedule=config.budget.schedule,
         price=price,
         spent_usd=logged_spend(destination),
+        run_ceiling_usd=config.budget.run_ceiling_usd,
     )
     written: list[Path] = []
     pending = []
@@ -575,26 +604,36 @@ async def run_experiment(
             continue
         pending.append((task_name, arm_name, seed, path))
 
-    async def _one(task_name: str, arm_name: str, seed: int) -> None:
-        script = _script_for(arm_name, script_overrides, model_config.kind, config.script_dir)
-        cost = await _run_one(
-            config=config,
-            task_name=task_name,
-            arm_name=arm_name,
-            seed=seed,
-            out_dir=destination,
-            script=script,
-            model_config=model_config,
-            price=price,
-            prompt_status=prompt_status,
-        )
-        guard.add(cost)
+    def _admit() -> RunMeter:
+        """Check the cap and the schedule, then count the new run as in flight (no await in between)."""
+        guard.check(billable=billable, now=datetime.now(timezone.utc))
+        meter = RunMeter(config.budget.run_ceiling_usd, guard if billable else None)
+        guard.open(meter)
+        return meter
+
+    async def _one(task_name: str, arm_name: str, seed: int, meter: RunMeter) -> None:
+        try:
+            script = _script_for(arm_name, script_overrides, model_config.kind, config.script_dir)
+            await _run_one(
+                config=config,
+                task_name=task_name,
+                arm_name=arm_name,
+                seed=seed,
+                out_dir=destination,
+                script=script,
+                model_config=model_config,
+                price=price,
+                prompt_status=prompt_status,
+                meter=meter,
+            )
+        finally:
+            # Finished, failed or aborted: what the run spent stays counted.
+            guard.close(meter)
 
     if config.parallel_tasks <= 1 or stop_after is not None:
         finished = 0
         for task_name, arm_name, seed, path in pending:
-            guard.check(billable=billable, now=datetime.now(timezone.utc))
-            await _one(task_name, arm_name, seed)
+            await _one(task_name, arm_name, seed, _admit())
             written.append(path)
             finished += 1
             if stop_after is not None and finished >= stop_after:
@@ -610,13 +649,13 @@ async def run_experiment(
                 if refusals or failures:
                     return None
                 try:
-                    guard.check(billable=billable, now=datetime.now(timezone.utc))
+                    meter = _admit()
                 except BudgetError as exc:
                     # Start nothing new; runs already going (and paid for) finish.
                     refusals.append(exc)
                     return None
                 try:
-                    await _one(task_name, arm_name, seed)
+                    await _one(task_name, arm_name, seed, meter)
                 except Exception as exc:  # noqa: BLE001 - re-raised once the runs in flight are done
                     # A failed run (provider error, provider mismatch, harness bug) stops new runs, but the
                     # runs already going were paid for and finish. The failed run has no run_end, so a

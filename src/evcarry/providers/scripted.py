@@ -23,6 +23,7 @@ from openai.types.responses.response_usage import InputTokensDetails
 from evcarry.providers.identity import ServedIdentity
 from evcarry.providers.openai_compat import LlmCallRecord
 from evcarry.providers.usage import TokenUsage, token_usage_from_counts
+from evcarry.runs.budget import admit_model_call
 
 
 class UnexpectedModelCall(RuntimeError):
@@ -118,6 +119,7 @@ class FixtureModel(Model):
     ) -> ModelResponse:
         del tools, output_schema, handoffs, tracing
         del previous_response_id, conversation_id, prompt
+        admit_model_call()
         self.seen_instructions.append(system_instructions)
         step = self._next_step(input)
         if step.tool:

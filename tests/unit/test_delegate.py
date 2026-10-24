@@ -209,7 +209,7 @@ async def test_every_delegating_arm_keeps_one_conversation_per_sub_agent(arm_nam
     main = agents_module.build_main_agent(
         arm=spec, task="t", seed=1, prompts_dir="prompts/v1", model_config=load_models()["mock"], script=None,
         toolset=toolset, hooks=hooks, writer=writer, ledger=ledger, checks=(), sampler=None, rate=0.0,
-        injector=None, max_turns=5,
+        injector=None, subagent_max_turns=5,
     )
     await Runner.run(main, "Solve the task.", hooks=hooks, max_turns=5, run_config=harness_run_config())
     first, second = models["researcher"].inputs

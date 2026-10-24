@@ -26,12 +26,17 @@ class AuditConfig(_Strict):
 
 class BudgetConfig(_Strict):
     cap_usd: float | None = None
+    # Per-run spend (agent and judge calls) at which the run's next model call is refused: status cost_ceiling.
+    run_ceiling_usd: float | None = None
     # Anything but offpeak_only skips the peak-window refusal, so a typo must not pass.
     schedule: Literal["any", "offpeak_only"] = "any"
 
 
 class LimitsConfig(_Strict):
+    # Main-agent turns.
     max_steps: int = 24
+    # Turns per sub-agent run (each main-agent call, repair or re-delegation); None means max_steps.
+    subagent_max_turns: int | None = None
     max_seconds: int = 120
     context: int = 32000
 

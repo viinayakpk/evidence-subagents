@@ -28,6 +28,7 @@ from openai.types.responses.response_prompt_param import ResponsePromptParam
 from evcarry.providers.identity import ServedIdentity, served_identity
 from evcarry.providers.pin import PinCheck, ProviderMismatch, check_pin, current_pin_guard
 from evcarry.providers.usage import PriceTable, TokenUsage, cost_usd, token_usage_from_body
+from evcarry.runs.budget import admit_model_call
 from evcarry.trace.writer import current_writer
 
 # One bucket per in-flight get_response, so concurrent calls do not share attempts.
@@ -278,6 +279,7 @@ class RecordingModel(OpenAIChatCompletionsModel):
         guard = current_pin_guard.get()
         if guard is not None:
             guard.raise_if_violated()  # no further paid calls once the run broke its pin
+        admit_model_call()  # no further calls once the run is at its cost ceiling or the experiment at its cap
         bucket: list[dict[str, Any]] = []
         token = _HTTP_BODIES.set(bucket)
         started = time.perf_counter()

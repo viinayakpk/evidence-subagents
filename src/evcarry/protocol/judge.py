@@ -37,6 +37,7 @@ from evcarry.protocol.checks import is_numeric_value, value_in_text
 from evcarry.protocol.schema import Claim
 from evcarry.providers.pin import ProviderMismatch
 from evcarry.providers.usage import PriceTable, cost_usd
+from evcarry.runs.budget import BudgetError
 from evcarry.trace.writer import JsonlWriter, current_writer
 
 _HYPHENATED = re.compile(r"[A-Za-z]+-[A-Za-z0-9]+")
@@ -234,8 +235,10 @@ class LlmJudge:
             )
             raw = _response_text(response)
             parsed = parse_judge_output(raw)
-        except ProviderMismatch:
-            raise  # an off-pin judge call stops the run; it must not fall back silently
+        except (ProviderMismatch, BudgetError):
+            # An off-pin call stops the run; a call refused at the cost ceiling or cap ends it.
+            # Neither may fall back to the lexical judge silently.
+            raise
         except (ValidationError, ValueError) as exc:
             error = f"unparseable judge reply: {exc}"[:500]
         except Exception as exc:  # noqa: BLE001 - provider errors fall back to the lexical judge

@@ -275,10 +275,10 @@ seeds: [1, 2]
 model: openrouter_ds_1017          # key in configs/models.yaml (changed 24 Oct; was deepseek_flash)
 audit: {sampler: risk, rate: 0.3, checks: [L0, L1, L2, L3]}
 judge_model: openrouter_ds_1017    # billed, counted toward the cap (changed 24 Oct; was local_primary)
-limits: {max_steps: 100, max_seconds: 7200, context: 131072}
+limits: {max_steps: 40, subagent_max_turns: 40, max_seconds: 7200, context: 131072}  # 24 Oct: was max_steps 100
 prompts: prompts/gym_v1/           # frozen after the pilot, byte-identical system prompt first
 require_frozen_prompts: true
-budget: {cap_usd: 80, schedule: offpeak_only}
+budget: {cap_usd: 45, run_ceiling_usd: 0.25, schedule: offpeak_only}  # 24 Oct: was cap 80; $50 with the $5 pilot
 parallel_tasks: 8
 out: runs/headline_deepseek_v1/
 
@@ -420,6 +420,7 @@ MS-Eval (Oct 2026) pairs each sub-agent run with a single-agent run on the same 
 
 1. Hypotheses fixed before paid runs. H1: evidence plus risk audit halves the flip rate versus vanilla MAD. H2: at most 20% extra cost. H3: risk beats random at equal budget. H4: at r = 0.3, at least 80% catch rate with at most 5% false rejects.
 2. H1/H2 on DeepSeek (headline) and the local model; H3/H4 on the local model.
+   - **Spend and turn limits (fixed 2026-10-24, before the pilot, same in every arm):** the main agent and each sub-agent run (every call, repair and re-delegation) get at most 40 turns. A run whose spend (agent and judge calls) reaches $0.25 has its next model call refused and ends with status `cost_ceiling`; it counts as a failure and its spend counts toward the cap. Caps: pilot $5, headline $45; a run starts only if the spend so far plus 1.2 x $0.25 for it and every run in flight fits under the cap.
    - **Contaminated runs (pre-registered 2026-10-24, before the pilot):** a run whose tool-call arguments reach for ground truth (the removed task files and `groundtruth` paths, the gym's git history, or its public repo `eigent-ai/toolathlon_gym` over the network; the `ground_truth_suspects` detector in `env/gym_docker.py`) counts as a failure whatever the grader says. It is flagged `contaminated` in `run_end` and `index.parquet` (the grader's own result stays in `eval_passed`), and every report lists these runs in a table (task, arm, seed, grader result, the flagged calls). They are not dropped or re-run.
 3. McNemar tests per task; bootstrap 95% intervals; mixed-effects logistic regression as a robustness check.
 4. Fault-injection results per corruption type; error analysis of every unprevented flip; cost decomposition.

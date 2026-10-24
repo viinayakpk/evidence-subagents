@@ -31,7 +31,7 @@ make summarize
 
 `evcarry check CONFIG` validates a file. `evcarry run CONFIG --dry-run` prints the grid, the budget, and the Docker plan. A dry run does not read an API key and does not start Docker.
 
-Exit codes from `evcarry run`: spend cap `2`, weekday peak window `3`, missing API key `4`, Docker, its daemon, or the gym images unavailable `5`, a frozen task list that no longer matches `tasks/SHA256SUMS` or a gym submodule not at the commit in `tasks/FROZEN.txt` `6`, a pinned OpenRouter call served by another provider `7`. The frozen inputs are checked first, then the key, then Docker.
+Exit codes from `evcarry run`: spend cap `2` (also when the cap is reached mid-run), weekday peak window `3`, missing API key `4`, Docker, its daemon, or the gym images unavailable `5`, a frozen task list that no longer matches `tasks/SHA256SUMS` or a gym submodule not at the commit in `tasks/FROZEN.txt` `6`, a pinned OpenRouter call served by another provider `7`. The frozen inputs are checked first, then the key, then Docker.
 
 ## Config
 
@@ -89,7 +89,9 @@ uv run evcarry gym check --tasks tasks/pilot10.txt         # starts and stops ea
 uv run evcarry run configs/experiments/pilot_deepseek.yaml  # openrouter_ds_1017, judge billed, cap $5
 ```
 
-Headline: `make headline` (`configs/experiments/headline_deepseek.yaml`, 70 tasks, four arms, two seeds, cap $80, eight parallel tasks, `openrouter_ds_1017` as model and L3 judge, `require_frozen_prompts: true`: it refuses until `evcarry prompts freeze prompts/gym_v1` has been run after the pilot). Parallel billable runs can overshoot the cap by about one batch, because the cap is checked at the start of each run.
+Headline: `make headline` (`configs/experiments/headline_deepseek.yaml`, 70 tasks, four arms, two seeds, cap $45, eight parallel tasks, `openrouter_ds_1017` as model and L3 judge, `require_frozen_prompts: true`: it refuses until `evcarry prompts freeze prompts/gym_v1` has been run after the pilot).
+
+Spend and turn limits (owner decision, 2026-10-24; pilot and headline, every arm): `limits.max_steps: 40` (main agent) and `limits.subagent_max_turns: 40` (each sub-agent run: a main-agent call, a repair, a re-delegation). `budget.run_ceiling_usd: 0.25`: each run has a meter fed by its own trace events (agent calls, judge calls, answered-then-failed calls, the same `event_spend` the cap uses); once it reaches $0.25 the run's next model call is refused, the run ends with `agent_status` and `status` `cost_ceiling`, `cost_ceiling: true`, `passed: false`, and is not graded. Its `run_end` is written, so a restart does not redo it, and its spend counts toward the cap. The call that crosses the ceiling completes, so a run can end a little above $0.25. A sub-agent or judge call refused at the ceiling also fails the run (the judge does not fall back to the lexical judge). With a ceiling the cap is hard: a billable run starts only if the spend so far, plus 1.2 x the ceiling for it and for each run in flight (less what each has spent), fits under `cap_usd`; if the cap is still reached mid-run, every later model call is refused, that run ends without `run_end` and the grid stops (exit 2). Caps: pilot $5, headline $45.
 
 M6 hooks, not used yet: `serving/serve_primary.sh`, `serving/serve_fallback.sh`, `serving/gpu_check.sh`, `serving/smoke_test.py` (no-op unless `--hit`).
 
@@ -160,13 +162,13 @@ The system prompt is the arm's file under the experiment's prompt set (`prompts/
 9. Strict `output_type=SubagentReturn` works for valid JSON. Schema-invalid JSON fails inside the SDK before the extractor. The one-repair guarantee is `parse_subagent_return` and the string-mode extractor path.
 10. Task-specific gym system prompts are not the frozen system prefix.
 11. The OpenRouter example price table is not a real rate card.
-12. Parallel paid runs can slightly overshoot the spend cap.
+12. Without `run_ceiling_usd`, parallel paid runs can overshoot the spend cap by about one batch. With it (pilot, headline) admission reserves the ceiling for runs in flight.
 13. L1 and L2 do not look for a `derived` claim's value in the cited output (a count or rate is computed, not quoted); its spans are still checked. Only L3 checks the value, and only on sampled claims (see `docs/STATUS_gym_judge.md`).
 14. L2 reports `unverifiable` (not a failure) for a write with no read-back in `configs/gym_tools.yaml` and for reads marked nondeterministic there. L3 still runs on those claims.
 15. Gym runs use `prompts/gym_v1/` (the gym's workspace and `claim_done` instructions, a fixed workspace path so the system prompt is byte-identical across runs, and a return-format section per arm). Tool results carry a `[call_id: ...]` header so a real model can cite them.
 18. After two rejections the plan has the main agent do the sub-task itself. Here the main agent has no workspace tools in any delegating arm, so `FALLBACK` tells it to re-plan the step and delegate it again, which is what the evidence prompt says.
 16. DeepSeek and the OpenRouter DeepSeek route have `json_schema_outputs: false`: typed and evidence sub-agents get the claim schema in the prompt and their text is parsed (one repair), because DeepSeek documents `json_object` but not `json_schema`.
-17. Sub-agent runs get the experiment's `max_steps` as their turn limit (the SDK default is 10).
+17. Sub-agent runs get `limits.subagent_max_turns` (default: `max_steps`) as their turn limit (the SDK default is 10). The pilot and headline set both to 40. The SA agent therefore has 40 turns for the whole task, while a delegating main agent has 40 turns and each sub-agent call 40 more.
 19. Sub-agents keep one conversation per run in every delegating arm (see "Arms and audits"). The plan does not say whether a repeated delegation starts fresh; persistent sessions make the retry context the same across arms, so H1 compares evidence plus audit, not retry memory.
 
 ## Open issues

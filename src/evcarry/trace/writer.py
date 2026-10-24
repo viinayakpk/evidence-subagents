@@ -5,20 +5,24 @@ from __future__ import annotations
 import json
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 current_writer: ContextVar["JsonlWriter | None"] = ContextVar("evcarry_trace_writer", default=None)
 
 
 class JsonlWriter:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, observer: Callable[[dict[str, Any]], None] | None = None) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self._handle = path.open("a", encoding="utf-8")
+        # Sees every event after it is written (the run's spend meter).
+        self.observer = observer
 
     def write(self, event: dict[str, Any]) -> None:
         self._handle.write(json.dumps(event, sort_keys=True, default=str) + "\n")
         self._handle.flush()
+        if self.observer is not None:
+            self.observer(event)
 
     def close(self) -> None:
         self._handle.close()
