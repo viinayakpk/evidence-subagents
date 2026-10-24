@@ -116,7 +116,7 @@ class FixtureModel(Model):
         conversation_id: str | None,
         prompt: Any,
     ) -> ModelResponse:
-        del model_settings, tools, output_schema, handoffs, tracing
+        del tools, output_schema, handoffs, tracing
         del previous_response_id, conversation_id, prompt
         self.seen_instructions.append(system_instructions)
         step = self._next_step(input)
@@ -157,6 +157,7 @@ class FixtureModel(Model):
             attempts=1,
             latency_ms=0.0,
             system_instructions=system_instructions,
+            temperature=getattr(model_settings, "temperature", None),
         )
         self.history.append(record)
         self._pending.append(record)

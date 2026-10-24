@@ -360,6 +360,7 @@ MS-Eval (Oct 2026) pairs each sub-agent run with a single-agent run on the same 
 | L3 support | Judge model: does the evidence support the claim? Pilot and headline: the agent model on the pinned OpenRouter route; M6: the local model. | A few API cents per run (headline); local GPU time (M6) |
 
 - **Default policy:** L0 and L1 on every claim; L2 and L3 on sampled claims.
+- **Sampling:** temperature 0 on every agent and judge call, every arm and provider; sent explicitly and logged per call.
 - **Audit budget:** per sub-agent return, `max(1, round_half_up(r × claims))` claims, capped at the number of claims: every return with a claim gets at least one L2/L3 audit when r > 0 (fixed 2026-10-24, before the pilot). The risk and random arms use the same budget.
 - **Risk-based sampler:** Features: used by a later write or the deliverable; derived or action_done; numeric; sub-agent hit limits, had errors or finished very fast; low confidence; failed L0/L1. Random sampler at equal budget is the control.
 - **On failure:** Reject, re-delegate once naming the failed claim, then the main agent does the sub-task.

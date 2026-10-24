@@ -34,7 +34,7 @@ from evcarry.harness.agents import build_main_agent
 from evcarry.harness.arms import arm_spec, effective_audit
 from evcarry.harness.hooks import LedgerHooks
 from evcarry.harness.prompts import prompt_path
-from evcarry.harness.run_settings import harness_run_config
+from evcarry.harness.run_settings import TEMPERATURE, harness_run_config
 from evcarry.harness.tools import OVERLONG_META, VIEW_OVERLONG, ToolRouter, Toolset, fixture_toolset, overlong_view
 from evcarry.inject.injector import FaultInjector
 from evcarry.ledger.ledger import Ledger
@@ -416,6 +416,9 @@ async def _run_one(
                 "routing": routing,
                 "environment": config.environment,
                 "judge_model": config.judge_model,
+                # Sent on every agent and judge call of every arm (llm_call/judge_call log what each request carried).
+                "temperature": TEMPERATURE,
+                "judge_temperature": TEMPERATURE,
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
         )

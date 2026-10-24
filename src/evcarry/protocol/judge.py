@@ -31,6 +31,7 @@ from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from evcarry.harness.run_settings import TEMPERATURE
 from evcarry.paths import resolve_repo_path
 from evcarry.protocol.checks import is_numeric_value, value_in_text
 from evcarry.protocol.schema import Claim
@@ -222,7 +223,7 @@ class LlmJudge:
             response = await self.model.get_response(
                 system_instructions=self.prompt,
                 input=request,
-                model_settings=ModelSettings(temperature=0.0),
+                model_settings=ModelSettings(temperature=TEMPERATURE),
                 tools=[],
                 output_schema=None,
                 handoffs=[],
@@ -282,6 +283,7 @@ class LlmJudge:
                     **(current_audit.get() or {}),
                     "judge_model": self.model_name,
                     **(record.provenance() if record is not None else {"served_model": None}),
+                    "temperature": record.temperature if record is not None else None,
                     "prompt_sha256": self.prompt_sha256,
                     "request_sha256": detail["request_sha256"],
                     "request_chars": len(request),

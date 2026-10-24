@@ -125,3 +125,67 @@ async def test_a_failed_call_does_not_take_the_next_calls_record(tmp_path) -> No
     (error,) = read_events(tmp_path / "trace.jsonl")
     assert error["type"] == "llm_error" and error["statuses"] == [400]
     assert error["tokens"] is None and error["served_model"] is None
+
+
+async def test_temperature_zero_is_sent_and_recorded() -> None:
+    """Owner decision 2: every request carries temperature 0, and the record says what the request carried."""
+    from evcarry.harness.run_settings import TEMPERATURE, agent_model_settings, harness_run_config
+
+    body = {
+        "id": "gen-1",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "deepseek/deepseek-v4.1-flash-1017",
+        "provider": "DeepInfra",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11},
+    }
+    sent: list[dict] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return httpx2.Response(200, json=body)
+
+    http = httpx2.AsyncClient(transport=httpx2.MockTransport(handler), event_hooks={"response": [capture_http_body]})
+    client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key="test-not-real", http_client=http)
+    model = RecordingModel("deepseek/deepseek-v4.1-flash-1017", client, kind="openrouter")
+    for settings in (agent_model_settings(), harness_run_config().model_settings, ModelSettings()):
+        await model.get_response(
+            "sys", "hi", settings, [], None, [], ModelTracing.DISABLED,
+            previous_response_id=None, conversation_id=None, prompt=None,
+        )
+    await http.aclose()
+    assert TEMPERATURE == 0.0
+    assert [request.get("temperature") for request in sent] == [0.0, 0.0, None]
+    assert [record.temperature for record in model.history] == [0.0, 0.0, None]  # None: not sent
+
+
+def test_every_agent_of_every_arm_is_built_with_temperature_zero() -> None:
+    from evcarry.harness.agents import build_main_agent
+    from evcarry.harness.arms import ARMS
+    from evcarry.harness.hooks import LedgerHooks
+    from evcarry.harness.tools import fixture_toolset
+    from evcarry.ledger.ledger import Ledger
+    from evcarry.providers.registry import load_models
+    from evcarry.providers.usage import PriceTable
+
+    class _Writer:
+        def write(self, event):
+            pass
+
+    for arm in ARMS.values():
+        ledger = Ledger()
+        toolset = fixture_toolset(None, ledger)
+        hooks = LedgerHooks(ledger, _Writer(), PriceTable(0, 0, 0, peak_multiplier=1), toolset.catalog)
+        main = build_main_agent(
+            arm=arm, task="fixture-sections", seed=1, prompts_dir="prompts/v1", model_config=load_models()["mock"],
+            script=None, toolset=toolset, hooks=hooks, writer=_Writer(), ledger=ledger, checks=arm.checks,
+            sampler=arm.sampler, rate=arm.default_rate, injector=None, max_turns=5,
+        )
+        assert main.model_settings.temperature == 0.0, arm.name
+        nested_agents = [tool._agent_instance for tool in main.tools if getattr(tool, "_agent_instance", None)]
+        assert len(nested_agents) == (2 if arm.delegate else 0)
+        for tool in main.tools:
+            nested = getattr(tool, "_agent_instance", None)
+            if nested is not None:
+                assert nested.model_settings.temperature == 0.0, (arm.name, tool.name)

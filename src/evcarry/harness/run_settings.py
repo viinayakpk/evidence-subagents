@@ -1,8 +1,19 @@
-"""The ``RunConfig`` for every ``Runner.run`` in a harness run (main agent, sub-agents, repairs, re-delegations)."""
+"""Settings shared by every ``Runner.run`` and every model call in a harness run (main agent, sub-agents, repairs, re-delegations, judge)."""
 
 from __future__ import annotations
 
-from agents import RunConfig
+from agents import ModelSettings, RunConfig
+
+# Sampling temperature for every model call in every arm and on every provider: main agent,
+# sub-agents and the L3 judge (owner decision, 2026-10-24). It is sent explicitly, so a
+# provider default never applies; llm_call, llm_error and judge_call log the value the request
+# carried, run_start the value configured.
+TEMPERATURE = 0.0
+
+
+def agent_model_settings() -> ModelSettings:
+    """``ModelSettings`` for the main agent and the sub-agents."""
+    return ModelSettings(temperature=TEMPERATURE)
 
 
 def harness_run_config() -> RunConfig:
@@ -13,5 +24,12 @@ def harness_run_config() -> RunConfig:
     ends the run and, through the run manager, cancels the whole grid; a main
     agent in a delegating arm that tries a workspace tool directly is a normal
     model mistake, not a harness failure.
+
+    The run-level ``model_settings`` overrides each agent's, so a ``Runner.run``
+    on an agent built without ``agent_model_settings()`` still sends ``TEMPERATURE``.
     """
-    return RunConfig(tracing_disabled=True, tool_not_found_behavior="return_error_to_model")
+    return RunConfig(
+        tracing_disabled=True,
+        tool_not_found_behavior="return_error_to_model",
+        model_settings=agent_model_settings(),
+    )

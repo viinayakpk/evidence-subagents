@@ -58,6 +58,7 @@ class LedgerHooks(RunHooks):
                 "router": record.identity.router,
                 "attempts": record.attempts,
                 "tokens": record.usage.as_dict(),
+                "temperature": record.temperature,
                 "cost_usd": cost_usd(record.usage, self.price, now),
                 "latency_ms": record.latency_ms,
                 "peak": is_peak(now, self.price),

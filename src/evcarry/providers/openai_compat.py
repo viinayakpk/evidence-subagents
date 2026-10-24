@@ -57,6 +57,8 @@ class LlmCallRecord:
     latency_ms: float
     system_instructions: str | None = None
     pin: PinCheck | None = None
+    # The sampling temperature the request carried (None: not sent, so the provider default applied).
+    temperature: float | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -68,6 +70,7 @@ class LlmCallRecord:
             "latency_ms": self.latency_ms,
             "usage": self.usage.as_dict(),
             "provider_check": self.pin.as_dict() if self.pin is not None else None,
+            "temperature": self.temperature,
         }
 
     def provenance(self) -> dict[str, object]:
@@ -111,8 +114,18 @@ def openrouter_headers(*, http_referer: str | None, x_title: str | None) -> dict
     return headers
 
 
+def sent_temperature(request: httpx2.Request) -> float | None:
+    """The ``temperature`` in a request's JSON body, or None when the request did not send one."""
+    try:
+        body = json.loads(request.content)
+    except Exception:
+        return None
+    value = body.get("temperature") if isinstance(body, dict) else None
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
 async def capture_http_body(response: httpx2.Response) -> None:
-    """Append each HTTP response JSON to the current call's bucket."""
+    """Append each HTTP response JSON, and the temperature its request sent, to the current call's bucket."""
     bucket = _HTTP_BODIES.get()
     if bucket is None:
         return
@@ -122,7 +135,7 @@ async def capture_http_body(response: httpx2.Response) -> None:
     except Exception:
         return
     if isinstance(payload, dict):
-        bucket.append({"status": response.status_code, "body": payload})
+        bucket.append({"status": response.status_code, "body": payload, "temperature": sent_temperature(response.request)})
 
 
 def http_client_with_capture(**kwargs: Any) -> httpx2.AsyncClient:
@@ -199,7 +212,8 @@ class RecordingModel(OpenAIChatCompletionsModel):
 
     def _record(self, bucket: list[dict[str, Any]], started: float, system_instructions: str | None) -> LlmCallRecord:
         successes = [item for item in bucket if 200 <= int(item.get("status", 0)) < 300]
-        chosen = successes[-1]["body"] if successes else (bucket[-1]["body"] if bucket else None)
+        attempt = successes[-1] if successes else (bucket[-1] if bucket else None)
+        chosen = attempt["body"] if attempt else None
         identity = served_identity(chosen, kind=self.kind, configured_model=self.configured_model)
         usage = token_usage_from_body(chosen if isinstance(chosen, dict) else None)
         record = LlmCallRecord(
@@ -212,6 +226,7 @@ class RecordingModel(OpenAIChatCompletionsModel):
             latency_ms=(time.perf_counter() - started) * 1000,
             system_instructions=system_instructions,
             pin=check_pin(identity, self.routing) if successes else None,
+            temperature=attempt.get("temperature") if attempt else None,
         )
         self.history.append(record)
         return record
@@ -240,6 +255,7 @@ class RecordingModel(OpenAIChatCompletionsModel):
                 "statuses": [item.get("status") for item in bucket],
                 **(record.provenance() if answered else {"served_model": None}),
                 "tokens": record.usage.as_dict() if answered else None,
+                "temperature": record.temperature,
                 "cost_usd": cost,
                 "provider_reported_cost_usd": record.usage.provider_reported_cost_usd if answered else None,
                 "latency_ms": record.latency_ms,

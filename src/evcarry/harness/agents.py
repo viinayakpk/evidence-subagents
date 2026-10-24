@@ -12,7 +12,7 @@ from evcarry.harness.arms import ArmSpec
 from evcarry.harness.delegate import DelegateState, make_extractor
 from evcarry.harness.hooks import LedgerHooks
 from evcarry.harness.prompts import SUBAGENT_TOOL_DESCRIPTIONS, prompt_text, subagent_instructions
-from evcarry.harness.run_settings import harness_run_config
+from evcarry.harness.run_settings import agent_model_settings, harness_run_config
 from evcarry.harness.tools import Toolset, build_tools
 from evcarry.inject.injector import FaultInjector
 from evcarry.protocol.schema import SubagentReturn
@@ -99,6 +99,7 @@ def build_main_agent(
             instructions=prompt_text(prompts_dir, arm.name),
             tools=build_tools(toolset.all_tools, caller, toolset),
             model=_model(model_config, script, task, "main"),
+            model_settings=agent_model_settings(),
             tool_use_behavior=stop,
         )
     state = DelegateState()
@@ -112,6 +113,7 @@ def build_main_agent(
             instructions=subagent_instructions(prompts_dir, name, arm.name),
             tools=build_tools(allow, caller, toolset),
             model=_model(model_config, script, task, name),
+            model_settings=agent_model_settings(),
             output_type=typed_output,
         )
         extractor = None
@@ -153,5 +155,6 @@ def build_main_agent(
         instructions=prompt_text(prompts_dir, arm.name),
         tools=ordered,
         model=_model(model_config, script, task, "main"),
+        model_settings=agent_model_settings(),
         tool_use_behavior=stop,
     )

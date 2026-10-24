@@ -43,6 +43,10 @@ async def test_mock_e2e_writes_jsonl(tmp_path: Path) -> None:
         start = events[0]
         assert start["served_model"] == "mock-scripted"
         assert len(start["git_commit"]) >= 7
+        # Owner decision 2: temperature 0 on every call, configured in run_start and logged per call.
+        assert start["temperature"] == 0.0 and start["judge_temperature"] == 0.0
+        calls = [event for event in events if event["type"] == "llm_call"]
+        assert calls and all(event["temperature"] == 0.0 for event in calls)
     sections = next(path for path in files if path.name.startswith("fixture-sections__evidence_risk"))
     evidence = read_events(sections)
     assert [event["action"] for event in evidence if event["type"] == "policy"] == ["accept", "accept"]
@@ -244,6 +248,7 @@ async def test_llm_judge_verdicts_are_traced(tmp_path: Path) -> None:
     events = read_events(next(tmp_path.glob("*.jsonl")))
     calls = [event for event in events if event["type"] == "judge_call"]
     assert calls and all(call["source"] == "llm" and call["verdict"] == "supported" for call in calls)
+    assert all(call["temperature"] == 0.0 for call in calls)
     verdicts = [v for event in events if event["type"] == "check" for v in event["verdicts"]]
     assert verdicts and all(v["source"] == "llm" and v["detail"]["model"] == "mock_judge" for v in verdicts)
     assert events[0]["judge_model"] == "mock_judge"
