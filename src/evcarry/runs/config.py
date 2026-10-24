@@ -7,29 +7,36 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from evcarry.paths import resolve_repo_path
 
 
-class AuditConfig(BaseModel):
-    sampler: str = "risk"
+class _Strict(BaseModel):
+    """Unknown keys are errors: a misspelt key (``judge_modle``) would otherwise fall back to its default."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AuditConfig(_Strict):
+    sampler: Literal["risk", "random"] = "risk"
     rate: float = 0.3
-    checks: list[str] = Field(default_factory=lambda: ["L0", "L1", "L2", "L3"])
+    checks: list[Literal["L0", "L1", "L2", "L3"]] = Field(default_factory=lambda: ["L0", "L1", "L2", "L3"])
 
 
-class BudgetConfig(BaseModel):
+class BudgetConfig(_Strict):
     cap_usd: float | None = None
-    schedule: str = "any"
+    # Anything but offpeak_only skips the peak-window refusal, so a typo must not pass.
+    schedule: Literal["any", "offpeak_only"] = "any"
 
 
-class LimitsConfig(BaseModel):
+class LimitsConfig(_Strict):
     max_steps: int = 24
     max_seconds: int = 120
     context: int = 32000
 
 
-class InjectConfig(BaseModel):
+class InjectConfig(_Strict):
     probability: float = 0.0
     types: list[str] = Field(
         default_factory=lambda: [
@@ -40,11 +47,11 @@ class InjectConfig(BaseModel):
             "mismatched_pointer",
         ]
     )
-    variant: str = "naive"
+    variant: Literal["naive", "pointer_consistent", "either"] = "naive"
     max_per_run: int | None = None
 
 
-class GymConfig(BaseModel):
+class GymConfig(_Strict):
     """Docker environment settings. Images default to the tags scripts/build_gym_images.sh makes."""
 
     agent_image: str | None = None
@@ -57,7 +64,7 @@ class GymConfig(BaseModel):
     export_workspace: bool = True
 
 
-class ExperimentConfig(BaseModel):
+class ExperimentConfig(_Strict):
     experiment: str
     tasks: str
     arms: list[str]

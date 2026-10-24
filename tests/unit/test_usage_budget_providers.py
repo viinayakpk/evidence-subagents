@@ -63,6 +63,25 @@ def test_budget_gates() -> None:
     guard.check(billable=False, now=datetime(2026, 10, 21, 2, 0, tzinfo=timezone.utc))
 
 
+def test_experiment_config_rejects_typos(tmp_path) -> None:
+    """A misspelt schedule used to disable the peak-window refusal; a misspelt key fell back to its default."""
+    from pydantic import ValidationError
+
+    from evcarry.runs.config import load_experiment
+
+    base = (Path(__file__).resolve().parents[2] / "configs/experiments/pilot_deepseek.yaml").read_text(encoding="utf-8")
+    for broken in (
+        base.replace("schedule: offpeak_only", "schedule: offpeak-only"),
+        base.replace("judge_model: lexical", "judge_modle: local_primary"),
+        base.replace("sampler: risk", "sampler: riks"),
+    ):
+        assert broken != base
+        path = tmp_path / "broken.yaml"
+        path.write_text(broken, encoding="utf-8")
+        with pytest.raises(ValidationError):
+            load_experiment(path)
+
+
 def test_openrouter_identity_and_models_yaml() -> None:
     body = {
         "model": "deepseek/deepseek-chat",
