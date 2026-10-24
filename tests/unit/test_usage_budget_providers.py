@@ -1,0 +1,119 @@
+import os
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+from evcarry.providers.identity import served_identity
+from evcarry.providers.registry import load_models
+from evcarry.providers.usage import PriceTable, TokenUsage, cost_usd, is_peak, token_usage_from_body
+from evcarry.runs.budget import BudgetGuard, PeakWindowError, SpendCapExceeded
+
+
+def _price() -> PriceTable:
+    return PriceTable.from_mapping(
+        {
+            "peak_multiplier": 2,
+            "weekdays_only": True,
+            "peak_windows_utc": [["01:00", "04:00"], ["06:00", "10:00"]],
+            "per_million_tokens": {"input_cache_miss": 0.15, "input_cache_hit": 0.003, "output": 0.60},
+        }
+    )
+
+
+def test_cost_matches_hand_values() -> None:
+    price = _price()
+    tokens = TokenUsage(10_000_000, 8_000_000, 2_000_000, 40_000)
+    off = datetime(2026, 10, 24, 2, 0, tzinfo=timezone.utc)  # Saturday
+    peak = datetime(2026, 10, 21, 2, 0, tzinfo=timezone.utc)  # Wednesday
+    assert cost_usd(tokens, price, off) == pytest.approx(0.348)
+    assert cost_usd(tokens, price, peak) == pytest.approx(0.696)
+    body = {
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "prompt_cache_hit_tokens": 80,
+            "prompt_cache_miss_tokens": 20,
+        }
+    }
+    parsed = token_usage_from_body(body)
+    assert cost_usd(parsed, price, off) == pytest.approx(0.00000924)
+
+
+def test_peak_window_boundaries() -> None:
+    price = _price()
+    wednesday = datetime(2026, 10, 21, tzinfo=timezone.utc)
+    assert is_peak(wednesday.replace(hour=0, minute=59), price) is False
+    assert is_peak(wednesday.replace(hour=1, minute=0), price) is True
+    assert is_peak(wednesday.replace(hour=2, minute=0), price) is True
+    assert is_peak(wednesday.replace(hour=4, minute=0), price) is False
+    assert is_peak(datetime(2026, 10, 24, 2, 0, tzinfo=timezone.utc), price) is False
+
+
+def test_budget_gates() -> None:
+    price = _price()
+    guard = BudgetGuard(cap_usd=0.5, schedule="offpeak_only", price=price, spent_usd=1.0)
+    with pytest.raises(SpendCapExceeded):
+        guard.check(billable=True, now=datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc))
+    peak_guard = BudgetGuard(cap_usd=10, schedule="offpeak_only", price=price, spent_usd=0)
+    with pytest.raises(PeakWindowError):
+        peak_guard.check(billable=True, now=datetime(2026, 10, 21, 2, 0, tzinfo=timezone.utc))
+    guard.check(billable=False, now=datetime(2026, 10, 21, 2, 0, tzinfo=timezone.utc))
+
+
+def test_openrouter_identity_and_models_yaml() -> None:
+    body = {
+        "model": "deepseek/deepseek-chat",
+        "openrouter_metadata": {
+            "requested": "deepseek/deepseek-chat",
+            "strategy": "order",
+            "attempt": 1,
+            "summary": "pinned",
+            "endpoints": {
+                "available": [
+                    {"provider": "DeepSeek", "model": "deepseek/deepseek-chat-v3", "selected": True}
+                ]
+            },
+        },
+    }
+    identity = served_identity(body, kind="openrouter", configured_model="deepseek/deepseek-chat")
+    assert identity.served_provider == "DeepSeek"
+    assert identity.served_model == "deepseek/deepseek-chat-v3"
+    assert identity.provider_unobserved is False
+    missing = served_identity({"model": "deepseek/deepseek-chat"}, kind="openrouter", configured_model="deepseek/deepseek-chat")
+    assert missing.served_provider is None
+    assert missing.provider_unobserved is True
+    models = load_models()
+    pinned = models["openrouter_pinned"]
+    assert pinned.base_url == "https://openrouter.ai/api/v1"
+    assert pinned.api_key_env == "OPENROUTER_API_KEY"
+    assert pinned.routing["order"] == ["deepseek"]
+    assert pinned.routing["allow_fallbacks"] is False
+    assert pinned.routing["require_parameters"] is True
+    assert pinned.http_referer
+    assert pinned.x_title == "evcarry"
+
+
+def test_no_real_keys_in_repo() -> None:
+    root = Path(__file__).resolve().parents[2]
+    banned = []
+    skip = {".venv", ".git", "third_party", "runs", "__pycache__"}
+    for path in root.rglob("*"):
+        if any(part in skip for part in path.parts):
+            continue
+        if not path.is_file():
+            continue
+        if path.suffix.lower() in {".png", ".parquet", ".pyc"}:
+            continue
+        if path.stat().st_size > 1_000_000:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if re.search(r"sk-[A-Za-z0-9]{20,}", text):
+            banned.append(str(path.relative_to(root)))
+    assert banned == []
+    example = (root / ".env.example").read_text(encoding="utf-8")
+    assert "OPENROUTER_API_KEY=" in example
+    assert "DEEPSEEK_API_KEY=" in example
+    os.environ["OPENROUTER_API_KEY"] = "test-not-real"
+    assert os.environ["OPENROUTER_API_KEY"] == "test-not-real"

@@ -1,0 +1,17 @@
+currency: USD
+example_only: true
+peak_multiplier: 2
+weekdays_only: true
+peak_windows_utc:
+  - ["01:00", "04:00"]
+  - ["06:00", "10:00"]
+per_million_tokens:
+  input_cache_miss: 0.15
+  input_cache_hit: 0.003
+  output: 0.60
+note: >
+  EXAMPLE ONLY. These numbers copy the DeepSeek off-peak table so a pinned
+  OpenRouter debug run has a budget figure. They are not an OpenRouter rate
+  card and must not be used as paper dollars. The harness also logs
+  usage.cost as provider_reported_cost_usd and does not mix that field into
+  this table.

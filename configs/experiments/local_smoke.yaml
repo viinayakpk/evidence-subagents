@@ -1,0 +1,14 @@
+experiment: local_smoke
+tasks: tasks/pilot10.txt
+arms: [sa]
+seeds: [1]
+model: local_primary
+audit: {sampler: risk, rate: 0.3, checks: [L0, L1, L2, L3]}
+judge_model: local_primary
+limits: {max_steps: 40, max_seconds: 600, context: 131072}
+prompts: prompts/v1
+budget: {cap_usd: 0, schedule: any}
+parallel_tasks: 1
+out: runs/local_smoke
+environment: docker
+task_root: third_party/toolathlon_gym/tasks/finalpool

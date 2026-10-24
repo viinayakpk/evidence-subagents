@@ -1,0 +1,13 @@
+# frozen stratified sample seed 20261024
+# pilot 10 restratified from the subset
+# gym ed735ba0af71d82688a55f952a6ea11479ae7206
+canvas-module-completion-notion-gcal
+canvas-quiz-analysis-ppt
+fetch-sf-hr-training-notion-gcal-excel
+howtocook-weekly-gsheet-gcal
+sf-sales-region-analysis-gsheet-email
+sf-sla-breach-audit
+terminal-arxiv-latex-excel-word-notion
+wc-shipping-analysis
+yf-portfolio-risk-excel
+yt-ml-repos-github-notion-excel-email

@@ -1,0 +1,67 @@
+{
+  "served_model": "mock-scripted",
+  "tasks": {
+    "fixture-sections": {
+      "agents": {
+        "main": [
+          {
+            "arguments": {
+              "input": "collect"
+            },
+            "call_id": "call_sub_research",
+            "tool": "researcher"
+          },
+          {
+            "arguments": {
+              "input": "finish"
+            },
+            "call_id": "call_sub_operate",
+            "tool": "operator"
+          },
+          {
+            "content": "done"
+          }
+        ],
+        "operator": [
+          {
+            "arguments": {
+              "text": "14 sections"
+            },
+            "call_id": "call_write",
+            "tool": "write_answer"
+          },
+          {
+            "content": "{\"claims\": [{\"claim_id\": \"c2\", \"confidence\": \"high\", \"depends_on\": [], \"evidence\": [{\"call_id\": \"call_write\", \"span\": \"wrote answer.txt\", \"type\": \"tool_call\"}], \"kind\": \"action_done\", \"text\": \"Wrote the answer file.\", \"value\": \"14 sections\"}], \"open_issues\": [], \"status\": \"complete\", \"subagent_id\": \"operator\"}"
+          }
+        ],
+        "researcher": [
+          {
+            "arguments": {
+              "query": "sections"
+            },
+            "call_id": "call_search",
+            "tool": "search_records"
+          },
+          {
+            "content": "{\"claims\": [{\"claim_id\": \"c1\", \"confidence\": \"high\", \"depends_on\": [], \"evidence\": [{\"call_id\": \"call_missing\", \"span\": \"student-Z\", \"type\": \"tool_call\"}], \"kind\": \"fact\", \"text\": \"The record cites student-Z.\", \"value\": \"student-Z\"}], \"open_issues\": [], \"status\": \"complete\", \"subagent_id\": \"researcher\"}"
+          },
+          {
+            "arguments": {
+              "query": "sections"
+            },
+            "call_id": "call_search_b",
+            "tool": "search_records"
+          },
+          {
+            "content": "{\"claims\": [{\"claim_id\": \"c1\", \"confidence\": \"high\", \"depends_on\": [], \"evidence\": [{\"call_id\": \"call_search_b\", \"span\": \"14 sections\", \"type\": \"tool_call\"}], \"kind\": \"fact\", \"text\": \"The record contains 14 sections.\", \"value\": 14}], \"open_issues\": [], \"status\": \"complete\", \"subagent_id\": \"researcher\"}"
+          }
+        ]
+      }
+    }
+  },
+  "usage": {
+    "cached_tokens": 80,
+    "input_tokens": 100,
+    "output_tokens": 20
+  }
+}

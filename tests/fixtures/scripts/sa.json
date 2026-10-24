@@ -1,0 +1,79 @@
+{
+  "served_model": "mock-scripted",
+  "tasks": {
+    "fixture-calendar": {
+      "agents": {
+        "main": [
+          {
+            "arguments": {
+              "title": "standup"
+            },
+            "call_id": "call_sa_event",
+            "tool": "create_event"
+          },
+          {
+            "arguments": {
+              "text": "standup"
+            },
+            "call_id": "call_sa_write",
+            "tool": "write_answer"
+          },
+          {
+            "content": "done"
+          }
+        ]
+      }
+    },
+    "fixture-rows": {
+      "agents": {
+        "main": [
+          {
+            "arguments": {
+              "sql": "select papers"
+            },
+            "call_id": "call_sa_rows",
+            "tool": "query_rows"
+          },
+          {
+            "arguments": {
+              "text": "paper-A"
+            },
+            "call_id": "call_sa_write",
+            "tool": "write_answer"
+          },
+          {
+            "content": "done"
+          }
+        ]
+      }
+    },
+    "fixture-sections": {
+      "agents": {
+        "main": [
+          {
+            "arguments": {
+              "query": "sections"
+            },
+            "call_id": "call_sa_search",
+            "tool": "search_records"
+          },
+          {
+            "arguments": {
+              "text": "14 sections"
+            },
+            "call_id": "call_sa_write",
+            "tool": "write_answer"
+          },
+          {
+            "content": "done"
+          }
+        ]
+      }
+    }
+  },
+  "usage": {
+    "cached_tokens": 80,
+    "input_tokens": 100,
+    "output_tokens": 20
+  }
+}

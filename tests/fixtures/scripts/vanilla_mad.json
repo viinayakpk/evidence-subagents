@@ -1,0 +1,158 @@
+{
+  "served_model": "mock-scripted",
+  "tasks": {
+    "fixture-calendar": {
+      "agents": {
+        "main": [
+          {
+            "arguments": {
+              "input": "collect"
+            },
+            "call_id": "call_sub_research",
+            "tool": "researcher"
+          },
+          {
+            "arguments": {
+              "input": "finish"
+            },
+            "call_id": "call_sub_operate",
+            "tool": "operator"
+          },
+          {
+            "content": "done"
+          }
+        ],
+        "operator": [
+          {
+            "arguments": {
+              "title": "standup"
+            },
+            "call_id": "call_event",
+            "tool": "create_event"
+          },
+          {
+            "arguments": {
+              "text": "standup"
+            },
+            "call_id": "call_write",
+            "tool": "write_answer"
+          },
+          {
+            "content": "created standup and wrote the answer"
+          }
+        ],
+        "researcher": [
+          {
+            "arguments": {
+              "query": "calendar"
+            },
+            "call_id": "call_search",
+            "tool": "search_records"
+          },
+          {
+            "content": "The record contains 14 sections."
+          }
+        ]
+      }
+    },
+    "fixture-rows": {
+      "agents": {
+        "main": [
+          {
+            "arguments": {
+              "input": "collect"
+            },
+            "call_id": "call_sub_research",
+            "tool": "researcher"
+          },
+          {
+            "arguments": {
+              "input": "finish"
+            },
+            "call_id": "call_sub_operate",
+            "tool": "operator"
+          },
+          {
+            "content": "done"
+          }
+        ],
+        "operator": [
+          {
+            "arguments": {
+              "text": "paper-A"
+            },
+            "call_id": "call_write",
+            "tool": "write_answer"
+          },
+          {
+            "content": "wrote the answer"
+          }
+        ],
+        "researcher": [
+          {
+            "arguments": {
+              "sql": "select papers"
+            },
+            "call_id": "call_rows",
+            "tool": "query_rows"
+          },
+          {
+            "content": "The rows include paper-A."
+          }
+        ]
+      }
+    },
+    "fixture-sections": {
+      "agents": {
+        "main": [
+          {
+            "arguments": {
+              "input": "collect"
+            },
+            "call_id": "call_sub_research",
+            "tool": "researcher"
+          },
+          {
+            "arguments": {
+              "input": "finish"
+            },
+            "call_id": "call_sub_operate",
+            "tool": "operator"
+          },
+          {
+            "content": "done"
+          }
+        ],
+        "operator": [
+          {
+            "arguments": {
+              "text": "14 sections"
+            },
+            "call_id": "call_write",
+            "tool": "write_answer"
+          },
+          {
+            "content": "wrote the answer"
+          }
+        ],
+        "researcher": [
+          {
+            "arguments": {
+              "query": "sections"
+            },
+            "call_id": "call_search",
+            "tool": "search_records"
+          },
+          {
+            "content": "The record contains 14 sections."
+          }
+        ]
+      }
+    }
+  },
+  "usage": {
+    "cached_tokens": 80,
+    "input_tokens": 100,
+    "output_tokens": 20
+  }
+}

@@ -1,0 +1,11 @@
+currency: USD
+peak_multiplier: 2
+weekdays_only: true
+peak_windows_utc:
+  - ["01:00", "04:00"]
+  - ["06:00", "10:00"]
+per_million_tokens:
+  input_cache_miss: 0.15
+  input_cache_hit: 0.003
+  output: 0.60
+note: DeepSeek off-peak prices. Peak windows are weekday UTC and the end is exclusive. Weekends are off-peak.

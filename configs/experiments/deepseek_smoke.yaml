@@ -1,0 +1,16 @@
+# First real M4 command that exercises this harness without Docker.
+# Needs DEEPSEEK_API_KEY. Uses the three fixture tasks, not the gym containers.
+experiment: deepseek_smoke
+tasks: tests/fixtures/tasks/fixtures3.txt
+arms: [sa]
+seeds: [1]
+model: deepseek_flash
+audit: {sampler: risk, rate: 0, checks: [L0, L1]}
+judge_model: lexical
+limits: {max_steps: 24, max_seconds: 300, context: 32000}
+prompts: prompts/v1
+budget: {cap_usd: 1, schedule: offpeak_only}
+parallel_tasks: 1
+out: runs/deepseek_smoke
+environment: in_process
+task_root: tests/fixtures/gym/tasks/finalpool

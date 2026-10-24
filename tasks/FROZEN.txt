@@ -1,0 +1,7 @@
+gym_repo=https://github.com/eigent-ai/toolathlon_gym.git
+gym_commit=ed735ba0af71d82688a55f952a6ea11479ae7206
+seed=20261024
+pool=160
+subset=70
+pilot=10
+method=largest-remainder then Random(seed).shuffle within sorted stratum names
