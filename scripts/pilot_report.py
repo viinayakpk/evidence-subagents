@@ -10,6 +10,12 @@ Definitions used in the tables:
   claim is a natural claim, so rejections are an upper bound on false rejects until the claims are hand-labelled.
 - spend: ``event_spend`` (the larger of price-table cost and OpenRouter's bill) over every billed event,
   in finished traces and in traces set aside after a failed attempt (``*.jsonl.aborted-<n>``).
+- provider mix: OpenRouter picks the endpoint per call from the pinned set, so the served provider is a
+  logged covariate. An arm is flagged unbalanced when its share of calls served by a provider differs
+  from the pooled share by more than ``IMBALANCE_PP`` percentage points (arms with at least 20 calls).
+  "$ at reference rates" re-prices every call's tokens at the first endpoint of the set, so arms can be
+  compared on cost whatever the mix (cache lost when a call moves provider still shows in the tokens).
+- worst-case projection: every call's tokens re-priced at the larger rate of each component over the set.
 """
 
 from __future__ import annotations
@@ -23,9 +29,48 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from evcarry.providers.usage import Rates, TokenUsage  # noqa: E402
 from evcarry.runs.budget import event_spend  # noqa: E402
 
 ARM_ORDER = ["sa", "vanilla_mad", "self_verify", "typed", "evidence", "evidence_random", "evidence_risk"]
+IMBALANCE_PP = 10.0
+_BILLED = ("llm_call", "judge_call", "llm_error")
+
+
+def _tokens(event: dict) -> TokenUsage:
+    raw = event.get("tokens") or {}
+    return TokenUsage(
+        int(raw.get("input_tokens") or 0), int(raw.get("cache_hit_tokens") or 0),
+        int(raw.get("cache_miss_tokens") or 0), int(raw.get("output_tokens") or 0),
+    )
+
+
+def _provider(event: dict) -> str:
+    return str(event.get("response_provider") or event.get("served_provider") or "unobserved")
+
+
+def _seconds(trace: list[dict]) -> float | None:
+    from datetime import datetime
+
+    start = next((e.get("ts") for e in trace if e.get("type") == "run_start"), None)
+    end = next((e.get("ts") for e in trace if e.get("type") == "run_end"), None)
+    if not start or not end:
+        return None
+    return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()
+
+
+def _route_rates(attempts: dict[str, list[list[dict]]]) -> tuple[Rates, Rates, str] | None:
+    """(reference rates: the set's first endpoint, worst-case rates, reference tag) for the runs' model entry."""
+    from evcarry.providers.registry import load_models
+
+    name = next((e.get("model") for traces in attempts.values() for t in traces for e in t if e.get("type") == "run_start"), None)
+    config = load_models().get(str(name)) if name else None
+    if config is None:
+        return None
+    price = config.price_table()
+    tags = list((config.routing or {}).get("order") or (config.routing or {}).get("only") or [])
+    reference, label = price.rates_for(tags[0].split("/")[0]) if tags else (price.worst_rates(), "table")
+    return reference, price.worst_rates(), label
 
 
 def _events(path: Path) -> list[dict]:
@@ -239,6 +284,55 @@ def report(run_dir: Path, planned: dict[str, int] | None, headline_runs_per_arm:
         + f"- provider_mismatch events: {mismatches}\n- temperature sent: {dict(temperatures)}"
     )
 
+    # Provider mix per arm: every answered (billed) call, finished runs and failed attempts.
+    rates = _route_rates(attempts)
+    mix: dict[str, Counter] = {arm: Counter() for arm in arms}
+    reference_usd: Counter = Counter()
+    for arm in arms:
+        for trace in attempts[arm]:
+            for event in trace:
+                if event.get("type") in _BILLED and event.get("tokens"):
+                    mix[arm][_provider(event)] += 1
+                    if rates:
+                        reference_usd[arm] += rates[0].usd(_tokens(event))
+    pooled: Counter = sum(mix.values(), Counter())
+    names = sorted(pooled)
+    flagged: list[str] = []
+    rows = []
+    for arm in arms:
+        total = sum(mix[arm].values())
+        shares = {name: 100 * mix[arm][name] / total for name in names} if total else {}
+        gaps = [abs(shares[name] - 100 * pooled[name] / sum(pooled.values())) for name in names] if total else []
+        unbalanced = total >= 20 and max(gaps, default=0) > IMBALANCE_PP
+        if unbalanced:
+            flagged.append(arm)
+        rows.append([
+            arm, total, *(f"{mix[arm][name]} ({shares.get(name, 0):.0f}%)" for name in names),
+            reference_usd[arm] if rates else "-", "**unbalanced**" if unbalanced else ("ok" if total >= 20 else "too few calls"),
+        ])
+    pooled_total = sum(pooled.values())
+    rows.append(["**pooled**", pooled_total, *(f"{pooled[name]} ({100 * pooled[name] / pooled_total:.0f}%)" for name in names), sum(reference_usd.values()) if rates else "-", ""])
+    reference_label = f"$ at {rates[2]} rates" if rates else "$ at reference rates"
+    out.append(
+        "### Provider mix per arm (answered calls, every attempt)\n\n"
+        + _table(["arm", "calls", *names, reference_label, f"balance (>{IMBALANCE_PP:.0f} pp from pooled)"], rows)
+        + ("\n\n**Unbalanced:** " + ", ".join(flagged) + ". Compare these arms' cost at the reference rates, and check success by provider." if flagged else "")
+    )
+
+    # Wall-clock per finished run.
+    rows = []
+    for arm in arms:
+        seconds = [s for trace in finished[arm] if (s := _seconds(trace)) is not None]
+        retried = sum(1 for trace in attempts[arm] for e in trace if e.get("type") in _BILLED and int(e.get("attempts") or 1) > 1)
+        rows.append([
+            arm, len(seconds), statistics.median(seconds) / 60 if seconds else "-", statistics.mean(seconds) / 60 if seconds else "-",
+            max(seconds) / 60 if seconds else "-", retried,
+        ])
+    out.append(
+        "### Wall-clock per finished run (minutes, run_start to run_end)\n\n"
+        + _table(["arm", "runs", "median", "mean", "max", "calls retried after 429/5xx"], rows)
+    )
+
     # Contaminated, ceiling, errors.
     contaminated, ceilings = [], Counter()
     errors: Counter = Counter()
@@ -272,14 +366,26 @@ def report(run_dir: Path, planned: dict[str, int] | None, headline_runs_per_arm:
     # Projection.
     if headline_runs_per_arm:
         rows = []
-        projected = 0.0
+        projected = worst_total = 0.0
         for arm in arms:
             mean = statistics.mean(per_run[arm]) if per_run[arm] else 0.0
+            # Worst case: every call of a finished run re-priced at the set's larger rate of each component.
+            worst_runs = [
+                sum(max(rates[1].usd(_tokens(e)), event_spend(e)) for e in trace if e.get("type") in _BILLED)
+                for trace in finished[arm]
+            ] if rates else []
+            worst = statistics.mean(worst_runs) if worst_runs else mean
             projected += mean * headline_runs_per_arm
-            rows.append([arm, mean, headline_runs_per_arm, mean * headline_runs_per_arm])
-        rows.append(["**total**", "", headline_runs_per_arm * len(arms), projected])
+            worst_total += worst * headline_runs_per_arm
+            rows.append([arm, mean, worst, headline_runs_per_arm, mean * headline_runs_per_arm, worst * headline_runs_per_arm])
+        rows.append(["**total**", "", "", headline_runs_per_arm * len(arms), projected, worst_total])
         cap = f" against the ${headline_cap:.0f} cap" if headline_cap else ""
-        out.append(f"### Projected headline cost{cap}\n\n" + _table(["arm", "mean $/run (pilot)", "headline runs", "projected $"], rows))
+        out.append(
+            f"### Projected headline cost{cap}\n\n"
+            + _table(["arm", "mean $/run (pilot)", "worst-case $/run", "headline runs", "projected $", "worst-case $"], rows)
+            + ("\n\nWorst case: every call priced at " + f"${rates[1].input_cache_miss}/${rates[1].input_cache_hit}/${rates[1].output} per M "
+               "(miss/hit/output), the larger rate of each component over the endpoint set." if rates else "")
+        )
     return "\n\n".join(out)
 
 
