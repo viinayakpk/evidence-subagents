@@ -74,6 +74,40 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+SHA256SUMS = "tasks/SHA256SUMS"
+GYM_SUBMODULE = "third_party/toolathlon_gym"
+
+
+class FrozenInputMismatch(RuntimeError):
+    """A frozen task list or the gym checkout differs from what was frozen."""
+
+
+def check_frozen_inputs(config: ExperimentConfig) -> None:
+    """Refuse to run on a frozen task list whose bytes changed, or on a gym checkout other than the frozen commit.
+
+    Task lists not named in ``tasks/SHA256SUMS`` (the test fixtures) are not checked.
+    Docker runs send the host's ``docs/task.md`` while the images hold the frozen
+    commit's task files, so the submodule must be at ``tasks/FROZEN.txt``'s commit.
+    """
+    tasks = resolve_repo_path(config.tasks)
+    sums = resolve_repo_path(SHA256SUMS)
+    if sums.is_file():
+        for line in sums.read_text(encoding="utf-8").splitlines():
+            digest, _, name = line.strip().partition("  ")
+            if name and resolve_repo_path(name.strip()) == tasks and _sha256_file(tasks) != digest:
+                raise FrozenInputMismatch(f"{config.tasks} does not match its hash in {SHA256SUMS}; the frozen list was edited.")
+    if config.environment == "docker":
+        from evcarry.env.gym_docker import gym_commit
+
+        checkout = resolve_repo_path(GYM_SUBMODULE)
+        if (checkout / ".git").exists():
+            head = subprocess.run(
+                ["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+            ).stdout.strip()
+            if head and head != gym_commit():
+                raise FrozenInputMismatch(f"{GYM_SUBMODULE} is at {head}, not the frozen gym commit {gym_commit()}.")
+
+
 def load_script_file(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -424,6 +458,7 @@ async def run_experiment(
     if config.model not in models:
         raise KeyError(f"unknown model {config.model}")
     model_config = models[config.model]
+    check_frozen_inputs(config)
     resolve_api_key(model_config)
     if config.judge_model in models:
         resolve_api_key(models[config.judge_model])

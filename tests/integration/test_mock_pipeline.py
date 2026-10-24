@@ -151,6 +151,27 @@ async def test_restart_counts_spend_already_logged_and_keeps_aborted_traces(tmp_
     assert read_events(unfinished)[-1]["type"] == "run_end"
 
 
+async def test_an_edited_frozen_task_list_is_refused(tmp_path: Path, monkeypatch) -> None:
+    from evcarry.runs import manager
+
+    edited = tmp_path / "subset.txt"
+    edited.write_text("fixture-sections\n", encoding="utf-8")
+    sums = tmp_path / "SHA256SUMS"
+    sums.write_text(f"{'0' * 64}  {edited}\n", encoding="utf-8")
+    monkeypatch.setattr(manager, "SHA256SUMS", str(sums))
+    config = load_experiment("configs/experiments/mock_e2e.yaml")
+    config.tasks = str(edited)
+    with pytest.raises(manager.FrozenInputMismatch):
+        await run_experiment(config, out_dir=tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+    sums.write_text(f"{manager._sha256_file(edited)}  {edited}\n", encoding="utf-8")
+    config.arms = ["sa"]
+    await run_experiment(config, out_dir=tmp_path / "out")
+    # The real frozen lists match their recorded hashes, and the gym checkout is the frozen commit.
+    monkeypatch.setattr(manager, "SHA256SUMS", "tasks/SHA256SUMS")
+    manager.check_frozen_inputs(load_experiment("configs/experiments/pilot_deepseek.yaml"))
+
+
 def test_cli_dry_run_and_exit_codes(capsys, monkeypatch) -> None:
     main(["run", "configs/experiments/mock_e2e.yaml", "--dry-run"])
     out = capsys.readouterr().out

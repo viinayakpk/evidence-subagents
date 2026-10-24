@@ -14,7 +14,7 @@ from evcarry.harness.arms import ARMS
 from evcarry.providers.registry import MissingApiKey, load_models
 from evcarry.runs.budget import PeakWindowError, SpendCapExceeded
 from evcarry.runs.config import load_experiment
-from evcarry.runs.manager import dry_run_report, run_experiment
+from evcarry.runs.manager import FrozenInputMismatch, dry_run_report, run_experiment
 from evcarry.trace.writer import read_events
 
 
@@ -155,3 +155,6 @@ def main(argv: list[str] | None = None) -> None:
     except EnvironmentUnavailable as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(5) from exc
+    except FrozenInputMismatch as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(6) from exc

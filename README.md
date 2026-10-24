@@ -31,7 +31,7 @@ make summarize
 
 `evcarry check CONFIG` validates a file. `evcarry run CONFIG --dry-run` prints the grid, the budget, and the Docker plan. A dry run does not read an API key and does not start Docker.
 
-Exit codes from `evcarry run`: spend cap `2`, weekday peak window `3`, missing API key `4`, Docker, its daemon, or the gym images unavailable `5`. The key is checked before Docker.
+Exit codes from `evcarry run`: spend cap `2`, weekday peak window `3`, missing API key `4`, Docker, its daemon, or the gym images unavailable `5`, a frozen task list that no longer matches `tasks/SHA256SUMS` or a gym submodule not at the commit in `tasks/FROZEN.txt` `6`. The frozen inputs are checked first, then the key, then Docker.
 
 ## Config
 
