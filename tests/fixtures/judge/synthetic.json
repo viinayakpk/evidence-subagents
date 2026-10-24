@@ -1,0 +1,16 @@
+{
+ "served_model": "mock-judge",
+ "default": {"verdict": "supported", "missing": [], "reason": "The evidence states every part of the claim."},
+ "rules": [
+  {"match": "text: Required papers: A, B, C, D\n",
+   "reply": {"verdict": "incomplete", "missing": ["E"], "reason": "The evidence lists A, B, C, D and E; the claim leaves out E."}},
+  {"match": "student-Z",
+   "reply": {"verdict": "unverifiable", "missing": [], "reason": "No student-Z appears in the evidence."}},
+  {"match": "text: There are 99 sections.",
+   "reply": {"verdict": "contradicted", "missing": [], "reason": "The evidence says 14 sections, not 99."}},
+  {"match": "text: The record contains 11 sections",
+   "reply": {"verdict": "contradicted", "missing": [], "reason": "The evidence says 14 sections, not 11."}},
+  {"match": "text: Calendar event retro was created.",
+   "reply": {"verdict": "unverifiable", "missing": [], "reason": "The evidence does not show a calendar event named retro."}}
+ ]
+}

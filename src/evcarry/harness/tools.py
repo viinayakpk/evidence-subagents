@@ -1,16 +1,27 @@
-"""Function tools over the in-process MCP client, plus the read-back catalog."""
+"""Function tools over an MCP caller, the per-run tool catalog, and the ledger hook-in.
+
+Each tool records its full result in the ledger before returning, so the
+ledger holds what the server said even when the model is shown a shortened
+copy. Gym runs show each result under a ``[call_id: ...]`` header, cut at
+``max_chars``; the rest is paged with ``view_overlong_output``. Fixture runs
+show the raw text.
+"""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from agents import FunctionTool
 
+from evcarry.ledger.ledger import Ledger
 from evcarry.protocol.replayer import render_tool_result
 
 _OBJECT = {"type": "object", "additionalProperties": False}
+
+VIEW_OVERLONG = "view_overlong_output"
 
 
 @dataclass(frozen=True)
@@ -21,6 +32,24 @@ class ToolMeta:
     read_only: bool
     readback_tool: str | None = None
     readback_arguments: dict[str, Any] | None = None
+    # Gym writes: read-back argument <- write argument, plus constant arguments.
+    readback_from: dict[str, str] | None = None
+    readback_fixed: dict[str, Any] | None = None
+    nondeterministic: bool = False
+    # Regexes masked before an L2 replay is compared with the ledger.
+    volatile: tuple[str, ...] = ()
+    strict: bool = True
+    server: str | None = None
+
+    def readback_for(self, arguments: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+        if not self.readback_tool:
+            return None
+        args = dict(self.readback_arguments or {})
+        args.update(self.readback_fixed or {})
+        for target, source in (self.readback_from or {}).items():
+            if source in arguments:
+                args[target] = arguments[source]
+        return self.readback_tool, args
 
 
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -75,26 +104,133 @@ OPERATOR_TOOLS = ("create_event", "list_events", "read_file", "write_answer")
 ALL_TOOLS = tuple(sorted(CATALOG))
 
 
-def meta_for(name: str) -> ToolMeta:
-    return CATALOG[name]
+def meta_for(name: str, catalog: dict[str, ToolMeta] | None = None) -> ToolMeta:
+    return (catalog if catalog is not None else CATALOG)[name]
 
 
-def build_function_tool(name: str, caller: Any) -> FunctionTool:
-    meta = CATALOG[name]
+@dataclass
+class Toolset:
+    """Which tools each role gets in one run, and how results are shown to the model."""
 
-    async def _invoke(_ctx: Any, args_json: str) -> str:
+    catalog: dict[str, ToolMeta]
+    caller: Any
+    all_tools: tuple[str, ...]
+    researcher: tuple[str, ...]
+    operator: tuple[str, ...]
+    main_extra: tuple[str, ...] = ()
+    stop_tools: tuple[str, ...] = ()
+    show_call_id: bool = False
+    max_chars: int | None = None
+    ledger: Ledger | None = None
+    local: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = field(default_factory=dict)
+
+
+def fixture_toolset(caller: Any, ledger: Ledger | None = None) -> Toolset:
+    return Toolset(
+        catalog=CATALOG,
+        caller=caller,
+        all_tools=ALL_TOOLS,
+        researcher=RESEARCHER_TOOLS,
+        operator=OPERATOR_TOOLS,
+        ledger=ledger,
+    )
+
+
+def display_text(text: str, ledger_id: str, *, show_call_id: bool, max_chars: int | None) -> str:
+    body = text
+    if max_chars is not None and len(text) > max_chars:
+        body = (
+            text[:max_chars]
+            + f"\n...[truncated: showing {max_chars} of {len(text)} chars. "
+            f'Call {VIEW_OVERLONG} with call_id "{ledger_id}" and page=1 for the next part.]'
+        )
+    if show_call_id:
+        return f"[call_id: {ledger_id}]\n{body}"
+    return body
+
+
+def overlong_view(ledger: Ledger, page_size: int) -> Callable[[dict[str, Any]], Awaitable[str]]:
+    """``view_overlong_output``: page through a ledger entry's full text."""
+
+    async def view(arguments: dict[str, Any]) -> str:
+        call_id = str(arguments.get("call_id", ""))
+        page = int(arguments.get("page", 0) or 0)
+        entry = ledger.get(call_id)
+        if entry is None:
+            return f"No recorded tool output with call_id '{call_id}'."
+        text = entry.result_text
+        pages = max(1, -(-len(text) // page_size))
+        if page < 0 or page >= pages:
+            return f"Page {page} is out of range; {call_id} has pages 0 to {pages - 1}."
+        start = page * page_size
+        chunk = text[start : start + page_size]
+        return f"{call_id} page {page} of {pages - 1} (chars {start}-{start + len(chunk)} of {len(text)})\n{chunk}"
+
+    return view
+
+
+OVERLONG_META = ToolMeta(
+    VIEW_OVERLONG,
+    "Read a long tool output that was truncated. Pages are counted from 0; page 0 is what you already saw.",
+    _schema({"call_id": {"type": "string"}, "page": {"type": "integer"}}, ["call_id", "page"]),
+    True,
+)
+
+
+class ToolRouter:
+    """The caller the tools and the L2 replayer use: local tools first, then the environment."""
+
+    def __init__(self, env: Any, local: dict[str, Callable[[dict[str, Any]], Awaitable[str]]]) -> None:
+        self.env = env
+        self.local = local
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        handler = self.local.get(name)
+        if handler is not None:
+            return await handler(arguments)
+        return await self.env.call_tool(name, arguments)
+
+
+def build_function_tool(name: str, caller: Any, toolset: Toolset | None = None) -> FunctionTool:
+    catalog = toolset.catalog if toolset is not None else CATALOG
+    meta = catalog[name]
+    ledger = toolset.ledger if toolset is not None else None
+
+    async def _invoke(ctx: Any, args_json: str) -> str:
         arguments = json.loads(args_json) if args_json else {}
         result = await caller.call_tool(name, arguments)
-        return render_tool_result(result)
+        text = render_tool_result(result)
+        if ledger is None:
+            return text
+        ledger_id = ledger.unique_id(getattr(ctx, "tool_call_id", "") or name)
+        readback = meta.readback_for(arguments)
+        ledger.record(
+            call_id=ledger_id,
+            tool_name=name,
+            arguments=arguments,
+            result_text=text,
+            read_only=meta.read_only,
+            readback_tool=readback[0] if readback else None,
+            readback_arguments=readback[1] if readback else None,
+            nondeterministic=meta.nondeterministic,
+            volatile=list(meta.volatile) or None,
+        )
+        if toolset is None:
+            return text
+        return display_text(text, ledger_id, show_call_id=toolset.show_call_id, max_chars=toolset.max_chars)
 
     return FunctionTool(
         name=meta.name,
         description=meta.description,
         params_json_schema=meta.schema,
         on_invoke_tool=_invoke,
-        strict_json_schema=True,
+        strict_json_schema=meta.strict,
     )
 
 
-def build_tools(names: tuple[str, ...] | list[str], caller: Any) -> list[FunctionTool]:
-    return [build_function_tool(name, caller) for name in sorted(names)]
+def build_tools(
+    names: tuple[str, ...] | list[str],
+    caller: Any,
+    toolset: Toolset | None = None,
+) -> list[FunctionTool]:
+    return [build_function_tool(name, caller, toolset) for name in sorted(names)]

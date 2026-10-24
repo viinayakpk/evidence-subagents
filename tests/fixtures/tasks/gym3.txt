@@ -1,0 +1,4 @@
+# three real gym tasks with scripted solutions (tests/fixtures/scripts/gym)
+sf-hr-rating-distribution
+wc-shipping-analysis
+yf-portfolio-risk-excel

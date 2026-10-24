@@ -1,1 +1,1 @@
-"""Task environments. In-process fixtures for $0 runs; Docker is a stub."""
+"""Task environments: in-process fixtures for $0 runs, and per-run Toolathlon-Gym containers in Docker."""

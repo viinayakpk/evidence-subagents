@@ -21,6 +21,8 @@ class LedgerEntry:
     read_only: bool
     readback_tool: str | None = None
     readback_arguments: dict[str, object] | None = None
+    nondeterministic: bool = False
+    volatile: list[str] | None = None
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -29,6 +31,15 @@ class LedgerEntry:
 @dataclass
 class Ledger:
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
+
+    def unique_id(self, call_id: str) -> str:
+        """``call_id`` if unused, else ``call_id#2``, ``call_id#3``, ... Provider ids can repeat."""
+        if call_id not in self.entries:
+            return call_id
+        suffix = 2
+        while f"{call_id}#{suffix}" in self.entries:
+            suffix += 1
+        return f"{call_id}#{suffix}"
 
     def record(
         self,
@@ -40,6 +51,8 @@ class Ledger:
         read_only: bool,
         readback_tool: str | None = None,
         readback_arguments: dict[str, object] | None = None,
+        nondeterministic: bool = False,
+        volatile: list[str] | None = None,
     ) -> LedgerEntry:
         if not call_id:
             raise ValueError("tool-call id is required")
@@ -54,6 +67,8 @@ class Ledger:
             read_only=read_only,
             readback_tool=readback_tool,
             readback_arguments=readback_arguments,
+            nondeterministic=nondeterministic,
+            volatile=volatile,
         )
         self.entries[call_id] = entry
         return entry

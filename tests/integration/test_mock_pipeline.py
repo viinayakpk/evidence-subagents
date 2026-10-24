@@ -123,6 +123,13 @@ def test_cli_dry_run_and_exit_codes(capsys, monkeypatch) -> None:
     with pytest.raises(SystemExit) as missing:
         main(["run", "configs/experiments/deepseek_smoke.yaml"])
     assert missing.value.code == 4
+    with pytest.raises(SystemExit) as missing_gym:
+        main(["run", "configs/experiments/pilot_deepseek.yaml"])
+    assert missing_gym.value.code == 4
+    # The key check passes with a placeholder; the Docker preflight then refuses
+    # before any run starts, so nothing is sent to the provider.
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "placeholder-not-a-key")
+    monkeypatch.setenv("EVCARRY_DOCKER", "/nonexistent/docker")
     with pytest.raises(SystemExit) as docker:
         main(["run", "configs/experiments/headline_deepseek.yaml"])
     assert docker.value.code == 5
@@ -159,3 +166,19 @@ def test_summarize_cli(tmp_path: Path, capsys) -> None:
     table = capsys.readouterr().out
     assert "fixture-sections" in table
     assert "True" in table
+
+
+async def test_llm_judge_verdicts_are_traced(tmp_path: Path) -> None:
+    config = load_experiment("configs/experiments/mock_e2e.yaml")
+    config.arms = ["evidence_risk"]
+    config.tasks = "tests/fixtures/tasks/one_sections.txt"
+    config.judge_model = "mock_judge"
+    await run_experiment(config, out_dir=tmp_path)
+    events = read_events(next(tmp_path.glob("*.jsonl")))
+    calls = [event for event in events if event["type"] == "judge_call"]
+    assert calls and all(call["source"] == "llm" and call["verdict"] == "supported" for call in calls)
+    verdicts = [v for event in events if event["type"] == "check" for v in event["verdicts"]]
+    assert verdicts and all(v["source"] == "llm" and v["detail"]["model"] == "mock_judge" for v in verdicts)
+    assert events[0]["judge_model"] == "mock_judge"
+    assert events[-1]["judge_calls"] == len(calls)
+    assert events[-1]["passed"] is True

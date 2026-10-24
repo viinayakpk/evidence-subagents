@@ -79,7 +79,7 @@ def make_extractor(
     injector: FaultInjector | None,
     state: DelegateState,
     max_turns: int,
-    judge: LexicalJudge | None = None,
+    judge: Any = None,
 ):
     async def _review(run_result: Any, prior: int) -> str:
         payload = await _coerce(run_result, agent, hooks, max_turns)

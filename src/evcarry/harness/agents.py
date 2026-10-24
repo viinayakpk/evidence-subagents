@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from agents import Agent
+from agents import Agent, RunConfig
+from agents.agent import StopAtTools
 
 from evcarry.harness.arms import ArmSpec
 from evcarry.harness.delegate import DelegateState, make_extractor
 from evcarry.harness.hooks import LedgerHooks
-from evcarry.harness.prompts import prompt_text
-from evcarry.harness.tools import ALL_TOOLS, OPERATOR_TOOLS, RESEARCHER_TOOLS, build_tools
+from evcarry.harness.prompts import subagent_instructions, prompt_text
+from evcarry.harness.tools import Toolset, build_tools
 from evcarry.inject.injector import FaultInjector
 from evcarry.protocol.schema import SubagentReturn
 from evcarry.providers.registry import ModelConfig, build_model
@@ -41,6 +42,7 @@ def _model(
             model=str(served),
             billable=config.billable,
             prices=config.prices,
+            json_schema_outputs=config.json_schema_outputs,
         )
     return build_model(
         model_config,
@@ -58,7 +60,7 @@ def build_main_agent(
     prompts_dir: str,
     model_config: ModelConfig,
     script: dict[str, Any] | None,
-    caller: Any,
+    toolset: Toolset,
     hooks: LedgerHooks,
     writer: JsonlWriter,
     ledger: Any,
@@ -67,27 +69,34 @@ def build_main_agent(
     rate: float,
     injector: FaultInjector | None,
     max_turns: int,
+    judge: Any = None,
 ) -> Agent:
-    tools = build_tools(ALL_TOOLS, caller)
+    caller = toolset.caller
+    # The gym's claim_done ends the run, as in the gym's own agent loop.
+    stop: Any = StopAtTools(stop_at_tool_names=list(toolset.stop_tools)) if toolset.stop_tools else "run_llm_again"
     if not arm.delegate:
         return Agent(
             name="main",
             instructions=prompt_text(prompts_dir, arm.name),
-            tools=tools,
+            tools=build_tools(toolset.all_tools, caller, toolset),
             model=_model(model_config, script, task, "main"),
+            tool_use_behavior=stop,
         )
     state = DelegateState()
     sub_tools = []
+    # Providers without json_schema response_format get the schema in the prompt
+    # instead; the extractor parses the string with one repair.
+    typed_output = SubagentReturn if arm.schema and model_config.json_schema_outputs else None
     for name, allow, description in (
-        ("researcher", RESEARCHER_TOOLS, "Gather evidence with read-only tools and return claims."),
-        ("operator", OPERATOR_TOOLS, "Apply writes and return claims about the actions."),
+        ("researcher", toolset.researcher, "Gather evidence with read-only tools and return claims."),
+        ("operator", toolset.operator, "Apply writes and return claims about the actions."),
     ):
         sub = Agent(
             name=name,
-            instructions=prompt_text(prompts_dir, name),
-            tools=build_tools(allow, caller),
+            instructions=subagent_instructions(prompts_dir, name, arm.schema),
+            tools=build_tools(allow, caller, toolset),
             model=_model(model_config, script, task, name),
-            output_type=SubagentReturn if arm.schema else None,
+            output_type=typed_output,
         )
         extractor = None
         if arm.schema:
@@ -107,6 +116,7 @@ def build_main_agent(
                 injector=injector,
                 state=state,
                 max_turns=max_turns,
+                judge=judge,
             )
         sub_tools.append(
             sub.as_tool(
@@ -114,12 +124,16 @@ def build_main_agent(
                 tool_description=description,
                 custom_output_extractor=extractor,
                 hooks=hooks,
+                # The SDK default is 10 turns per nested run, far below a gym task's budget.
+                max_turns=max_turns,
+                run_config=RunConfig(tracing_disabled=True),
             )
         )
-    ordered = sorted(sub_tools, key=lambda tool: tool.name)
+    ordered = sorted(sub_tools, key=lambda tool: tool.name) + build_tools(toolset.main_extra, caller, toolset)
     return Agent(
         name="main",
         instructions=prompt_text(prompts_dir, arm.name),
         tools=ordered,
         model=_model(model_config, script, task, "main"),
+        tool_use_behavior=stop,
     )

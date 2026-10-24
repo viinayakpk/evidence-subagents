@@ -8,7 +8,7 @@ model: openrouter_pinned
 audit: {sampler: risk, rate: 0.3, checks: [L0, L1, L2, L3]}
 judge_model: lexical
 limits: {max_steps: 40, max_seconds: 600, context: 32000}
-prompts: prompts/v1
+prompts: prompts/gym_v1
 budget: {cap_usd: 5, schedule: any}
 parallel_tasks: 2
 out: runs/openrouter_debug

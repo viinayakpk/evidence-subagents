@@ -1,0 +1,464 @@
+{
+ "served_model": "mock-scripted",
+ "tasks": {
+  "sf-hr-rating-distribution": {
+   "agents": {
+    "main": [
+     {
+      "arguments": {
+       "input": "Count employees by department and performance rating in the HR data warehouse."
+      },
+      "call_id": "m_research",
+      "tool": "researcher"
+     },
+     {
+      "arguments": {
+       "input": "Create /workspace/agent_workspace/HR_Rating_Distribution.xlsx with the 'Rating Distribution' and 'Summary' sheets from these counts, then email hr-analytics@company.com with subject 'Performance Rating Distribution Report'."
+      },
+      "call_id": "m_operate",
+      "tool": "operator"
+     },
+     {
+      "arguments": {},
+      "call_id": "m_done",
+      "tool": "claim_done"
+     }
+    ],
+    "operator": [
+     {
+      "arguments": {
+       "filepath": "/workspace/agent_workspace/HR_Rating_Distribution.xlsx"
+      },
+      "call_id": "w_book",
+      "tool": "excel-create_workbook"
+     },
+     {
+      "arguments": {
+       "data": [
+        [
+         "Dept_Rating",
+         "Count"
+        ],
+        [
+         "Engineering - 1",
+         375
+        ],
+        [
+         "Engineering - 2",
+         1006
+        ],
+        [
+         "Engineering - 3",
+         3180
+        ],
+        [
+         "Engineering - 4",
+         1814
+        ],
+        [
+         "Engineering - 5",
+         721
+        ],
+        [
+         "Finance - 1",
+         334
+        ],
+        [
+         "Finance - 2",
+         1053
+        ],
+        [
+         "Finance - 3",
+         3251
+        ],
+        [
+         "Finance - 4",
+         1789
+        ],
+        [
+         "Finance - 5",
+         721
+        ],
+        [
+         "HR - 1",
+         358
+        ],
+        [
+         "HR - 2",
+         1067
+        ],
+        [
+         "HR - 3",
+         3167
+        ],
+        [
+         "HR - 4",
+         1745
+        ],
+        [
+         "HR - 5",
+         740
+        ],
+        [
+         "Operations - 1",
+         380
+        ],
+        [
+         "Operations - 2",
+         1051
+        ],
+        [
+         "Operations - 3",
+         3263
+        ],
+        [
+         "Operations - 4",
+         1739
+        ],
+        [
+         "Operations - 5",
+         687
+        ],
+        [
+         "R&D - 1",
+         362
+        ],
+        [
+         "R&D - 2",
+         1053
+        ],
+        [
+         "R&D - 3",
+         3190
+        ],
+        [
+         "R&D - 4",
+         1785
+        ],
+        [
+         "R&D - 5",
+         693
+        ],
+        [
+         "Sales - 1",
+         373
+        ],
+        [
+         "Sales - 2",
+         1121
+        ],
+        [
+         "Sales - 3",
+         3215
+        ],
+        [
+         "Sales - 4",
+         1829
+        ],
+        [
+         "Sales - 5",
+         694
+        ],
+        [
+         "Support - 1",
+         371
+        ],
+        [
+         "Support - 2",
+         1108
+        ],
+        [
+         "Support - 3",
+         3250
+        ],
+        [
+         "Support - 4",
+         1763
+        ],
+        [
+         "Support - 5",
+         752
+        ]
+       ],
+       "filepath": "/workspace/agent_workspace/HR_Rating_Distribution.xlsx",
+       "sheet_name": "Rating Distribution"
+      },
+      "call_id": "w_dist",
+      "tool": "excel-write_data_to_excel"
+     },
+     {
+      "arguments": {
+       "data": [
+        [
+         "Metric",
+         "Value"
+        ],
+        [
+         "Total_Employees",
+         50000
+        ],
+        [
+         "Rating_5_Count",
+         5008
+        ],
+        [
+         "Rating_4_Count",
+         12464
+        ],
+        [
+         "Rating_1_Count",
+         2553
+        ],
+        [
+         "High_Performers_Pct",
+         34.9
+        ]
+       ],
+       "filepath": "/workspace/agent_workspace/HR_Rating_Distribution.xlsx",
+       "sheet_name": "Summary"
+      },
+      "call_id": "w_summary",
+      "tool": "excel-write_data_to_excel"
+     },
+     {
+      "arguments": {
+       "body": "Performance rating distribution across 50000 employees: 5008 rated 5, 12464 rated 4, 2553 rated 1. High performers (rating 4 or 5): 34.9%.",
+       "subject": "Performance Rating Distribution Report",
+       "to": "hr-analytics@company.com"
+      },
+      "call_id": "w_email",
+      "tool": "emails-send_email"
+     },
+     {
+      "content": "Wrote HR_Rating_Distribution.xlsx and sent the summary email."
+     }
+    ],
+    "researcher": [
+     {
+      "arguments": {
+       "query": "SELECT \"DEPARTMENT\", \"PERFORMANCE_RATING\", COUNT(*) AS n FROM sf_data.\"HR_ANALYTICS__PUBLIC__EMPLOYEES\" GROUP BY 1, 2 ORDER BY 1, 2"
+      },
+      "call_id": "r_counts",
+      "tool": "snowflake-read_query"
+     },
+     {
+      "content": "Counts per department and rating retrieved; 50000 employees, 34.9% rated 4 or 5."
+     }
+    ]
+   }
+  },
+  "wc-shipping-analysis": {
+   "agents": {
+    "main": [
+     {
+      "arguments": {
+       "input": "List every shipping zone in the shop and how many shipping methods each zone has."
+      },
+      "call_id": "m_research",
+      "tool": "researcher"
+     },
+     {
+      "arguments": {
+       "input": "Create /workspace/agent_workspace/WC_Shipping_Report.xlsx with a sheet 'Shipping Zones' (columns Zone, Shipping_Methods; rows California 2, Domestic US 3, International 1, sorted by zone) and a sheet 'Summary' (Metric, Value; Total_Zones 3, Total_Methods 6). Then email logistics@shop.com with subject 'Shipping Zone Configuration Review' listing the zones."
+      },
+      "call_id": "m_operate",
+      "tool": "operator"
+     },
+     {
+      "arguments": {},
+      "call_id": "m_done",
+      "tool": "claim_done"
+     }
+    ],
+    "operator": [
+     {
+      "arguments": {
+       "filepath": "/workspace/agent_workspace/WC_Shipping_Report.xlsx"
+      },
+      "call_id": "w_book",
+      "tool": "excel-create_workbook"
+     },
+     {
+      "arguments": {
+       "data": [
+        [
+         "Zone",
+         "Shipping_Methods"
+        ],
+        [
+         "California",
+         2
+        ],
+        [
+         "Domestic US",
+         3
+        ],
+        [
+         "International",
+         1
+        ]
+       ],
+       "filepath": "/workspace/agent_workspace/WC_Shipping_Report.xlsx",
+       "sheet_name": "Shipping Zones"
+      },
+      "call_id": "w_zones",
+      "tool": "excel-write_data_to_excel"
+     },
+     {
+      "arguments": {
+       "data": [
+        [
+         "Metric",
+         "Value"
+        ],
+        [
+         "Total_Zones",
+         3
+        ],
+        [
+         "Total_Methods",
+         6
+        ]
+       ],
+       "filepath": "/workspace/agent_workspace/WC_Shipping_Report.xlsx",
+       "sheet_name": "Summary"
+      },
+      "call_id": "w_summary",
+      "tool": "excel-write_data_to_excel"
+     },
+     {
+      "arguments": {
+       "body": "Shipping zones and method counts:\n- California: 2\n- Domestic US: 3\n- International: 1\nTotal: 3 zones, 6 methods.",
+       "subject": "Shipping Zone Configuration Review",
+       "to": "logistics@shop.com"
+      },
+      "call_id": "w_email",
+      "tool": "emails-send_email"
+     },
+     {
+      "content": "Wrote both sheets of WC_Shipping_Report.xlsx and sent the review email to logistics@shop.com."
+     }
+    ],
+    "researcher": [
+     {
+      "arguments": {},
+      "call_id": "r_zones",
+      "tool": "woocommerce-woo_shipping_zones_list"
+     },
+     {
+      "arguments": {
+       "zoneId": 2
+      },
+      "call_id": "r_methods_2",
+      "tool": "woocommerce-woo_shipping_zone_methods_list"
+     },
+     {
+      "arguments": {
+       "zoneId": 1
+      },
+      "call_id": "r_methods_1",
+      "tool": "woocommerce-woo_shipping_zone_methods_list"
+     },
+     {
+      "arguments": {
+       "zoneId": 3
+      },
+      "call_id": "r_methods_3",
+      "tool": "woocommerce-woo_shipping_zone_methods_list"
+     },
+     {
+      "content": "Zones: California (2 methods), Domestic US (3 methods), International (1 method). 6 methods in total."
+     }
+    ]
+   }
+  },
+  "yf-portfolio-risk-excel": {
+   "agents": {
+    "main": [
+     {
+      "arguments": {
+       "input": "Retrieve the full daily closing price history for GOOGL, AMZN, JPM, JNJ and XOM."
+      },
+      "call_id": "m_research",
+      "tool": "researcher"
+     },
+     {
+      "arguments": {
+       "input": "Build /workspace/agent_workspace/Portfolio_Risk_Analysis.xlsx: 'Price History' (Date plus one close column per ticker, dates where all five have data), 'Risk Metrics' (mean, sample standard deviation, min, max, two decimals) and 'Risk Assessment' (coefficient of variation to four decimals and Low/Medium/High Risk at 0.10 and 0.20)."
+      },
+      "call_id": "m_operate",
+      "tool": "operator"
+     },
+     {
+      "arguments": {},
+      "call_id": "m_done",
+      "tool": "claim_done"
+     }
+    ],
+    "operator": [
+     {
+      "arguments": {
+       "code": "import math, os\nfrom collections import defaultdict\nimport openpyxl, psycopg2\n\ntickers = [\"GOOGL\", \"AMZN\", \"JPM\", \"JNJ\", \"XOM\"]\nconn = psycopg2.connect(host=os.environ[\"PGHOST\"], dbname=\"toolathlon_gym\", user=\"eigent\", password=\"camel\")\ncur = conn.cursor()\nprices = defaultdict(dict)\nfor t in tickers:\n    cur.execute(\"SELECT date, close FROM yf.stock_prices WHERE symbol = %s ORDER BY date\", (t,))\n    for day, close in cur.fetchall():\n        prices[day][t] = float(close)\ndates = sorted(d for d, row in prices.items() if len(row) == len(tickers))\nwb = openpyxl.Workbook()\nhistory = wb.active\nhistory.title = \"Price History\"\nhistory.append([\"Date\", *tickers])\nfor d in dates:\n    history.append([d.isoformat(), *[round(prices[d][t], 2) for t in tickers]])\nmetrics = wb.create_sheet(\"Risk Metrics\")\nmetrics.append([\"Ticker\", \"Average Close Price\", \"Standard Deviation\", \"Minimum Close\", \"Maximum Close\"])\nassessment = wb.create_sheet(\"Risk Assessment\")\nassessment.append([\"Ticker\", \"Coefficient of Variation\", \"Risk Category\"])\nfor t in tickers:\n    values = [prices[d][t] for d in dates]\n    mean = sum(values) / len(values)\n    std = math.sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1))\n    cv = std / mean\n    category = \"Low Risk\" if cv < 0.10 else (\"Medium Risk\" if cv <= 0.20 else \"High Risk\")\n    metrics.append([t, round(mean, 2), round(std, 2), round(min(values), 2), round(max(values), 2)])\n    assessment.append([t, round(cv, 4), category])\nwb.save(\"/workspace/agent_workspace/Portfolio_Risk_Analysis.xlsx\")\nprint(f\"saved Portfolio_Risk_Analysis.xlsx with {len(dates)} dates\")\n",
+       "filename": "portfolio_risk.py"
+      },
+      "call_id": "w_python",
+      "tool": "python_execute"
+     },
+     {
+      "content": "Saved Portfolio_Risk_Analysis.xlsx with the three sheets."
+     }
+    ],
+    "researcher": [
+     {
+      "arguments": {
+       "period": "max",
+       "ticker": "GOOGL"
+      },
+      "call_id": "r_googl",
+      "tool": "yahoo-finance-get_historical_stock_prices"
+     },
+     {
+      "arguments": {
+       "period": "max",
+       "ticker": "AMZN"
+      },
+      "call_id": "r_amzn",
+      "tool": "yahoo-finance-get_historical_stock_prices"
+     },
+     {
+      "arguments": {
+       "period": "max",
+       "ticker": "JPM"
+      },
+      "call_id": "r_jpm",
+      "tool": "yahoo-finance-get_historical_stock_prices"
+     },
+     {
+      "arguments": {
+       "period": "max",
+       "ticker": "JNJ"
+      },
+      "call_id": "r_jnj",
+      "tool": "yahoo-finance-get_historical_stock_prices"
+     },
+     {
+      "arguments": {
+       "period": "max",
+       "ticker": "XOM"
+      },
+      "call_id": "r_xom",
+      "tool": "yahoo-finance-get_historical_stock_prices"
+     },
+     {
+      "content": "All five tickers have 501 daily closes from 2024-03-06 to 2026-03-05."
+     }
+    ]
+   }
+  }
+ },
+ "usage": {
+  "cached_tokens": 900,
+  "input_tokens": 1200,
+  "output_tokens": 150
+ }
+}

@@ -44,6 +44,19 @@ class InjectConfig(BaseModel):
     max_per_run: int | None = None
 
 
+class GymConfig(BaseModel):
+    """Docker environment settings. Images default to the tags scripts/build_gym_images.sh makes."""
+
+    agent_image: str | None = None
+    postgres_image: str | None = None
+    tool_policy: str = "configs/gym_tools.yaml"
+    # The gym's own agent truncates tool output at 8000 characters.
+    tool_output_chars: int = 8000
+    setup_timeout_s: int = 300
+    eval_timeout_s: int = 600
+    export_workspace: bool = True
+
+
 class ExperimentConfig(BaseModel):
     experiment: str
     tasks: str
@@ -59,6 +72,9 @@ class ExperimentConfig(BaseModel):
     out: str = "runs/out"
     environment: Literal["in_process", "docker"] = "in_process"
     task_root: str | None = None
+    gym: GymConfig = Field(default_factory=GymConfig)
+    # Scripted-model fixtures, one JSON file per arm (ArmSpec.script).
+    script_dir: str = "tests/fixtures/scripts"
     inject: InjectConfig | None = None
     source_path: str | None = None
     source_sha256: str = ""

@@ -1,8 +1,13 @@
 """Catch rates on a synthetic ledger, one corruption at a time.
 
 This is the table notebook 03 prints. It does not run the agent loop.
-The lexical L3 judge does not catch omissions: remaining words of the list
-still appear in the evidence.
+
+The search result lists five required papers (A to E). Omission rows start
+from a claim that lists all five; the corruption drops E while the cited
+evidence still shows it. The lexical L3 judge does not catch that (every item
+the claim still lists is in the evidence); an LLM judge that reads the whole
+list can. ``catch_table(judge=...)`` runs the same rows with any judge, and
+``include_clean=True`` adds the two uncorrupted claims to measure false rejects.
 """
 
 from __future__ import annotations
@@ -28,12 +33,15 @@ class _Caller:
             query = str(arguments.get("query"))
             if query == "other":
                 return "note 14 sections"
-            return "Found 14 sections in paper-A for sections\nA, B, C, D"
+            return SEARCH_RESULT
         if name == "read_file":
             return "14 sections"
         if name == "list_events":
             return "standup"
         return ""
+
+
+SEARCH_RESULT = "Found 14 sections in paper-A for sections\nRequired papers: A, B, C, D, E"
 
 
 def _base_claim() -> Claim:
@@ -50,13 +58,24 @@ def _base_claim() -> Claim:
     )
 
 
+def _list_claim() -> Claim:
+    return Claim(
+        claim_id="c1",
+        text="Required papers: A, B, C, D, E",
+        kind="fact",
+        value=["A", "B", "C", "D", "E"],
+        evidence=[ToolCallEvidence(type="tool_call", call_id="call_search", span="A, B, C, D, E")],
+        confidence="high",
+    )
+
+
 def _ledger() -> Ledger:
     ledger = Ledger()
     ledger.record(
         call_id="call_search",
         tool_name="search_records",
         arguments={"query": "sections"},
-        result_text="Found 14 sections in paper-A for sections\nA, B, C, D",
+        result_text=SEARCH_RESULT,
         read_only=True,
     )
     ledger.record(
@@ -96,31 +115,35 @@ def _run(coro):
         return pool.submit(asyncio.run, coro).result()
 
 
-def catch_table() -> list[dict[str, str | None]]:
+def _audit(claim: Claim, ledger: Ledger, judge: Any) -> Any:
+    payload = SubagentReturn(subagent_id="researcher", status="complete", claims=[claim], open_issues=[])
+    return _run(
+        audit_return(
+            payload,
+            ledger=ledger,
+            caller=_Caller(ledger),
+            checks=("L0", "L1", "L2", "L3"),
+            sampler="risk",
+            rate=1.0,
+            seed=1,
+            judge=judge,
+            require_evidence=True,
+        )
+    )
+
+
+def catch_table(judge: Any = None, *, include_clean: bool = False) -> list[dict[str, str | None]]:
+    """Earliest check level that rejects each corruption; ``judge`` defaults to the lexical one."""
     rows = []
     for kind in CORRUPTION_TYPES:
         for variant in VARIANTS:
             ledger = _ledger()
-            claim = apply_corruption(_base_claim(), kind, variant, ledger)
-            payload = SubagentReturn(
-                subagent_id="researcher",
-                status="complete",
-                claims=[claim],
-                open_issues=[],
-            )
-            report = _run(
-                audit_return(
-                    payload,
-                    ledger=ledger,
-                    caller=_Caller(ledger),
-                    checks=("L0", "L1", "L2", "L3"),
-                    sampler="risk",
-                    rate=1.0,
-                    seed=1,
-                    require_evidence=True,
-                )
-            )
-            rows.append({"kind": kind, "variant": variant, "earliest": _earliest(report)})
+            base = _list_claim() if kind == "omission" else _base_claim()
+            claim = apply_corruption(base, kind, variant, ledger)
+            rows.append({"kind": kind, "variant": variant, "earliest": _earliest(_audit(claim, ledger, judge))})
+    if include_clean:
+        for name, build in (("clean", _base_claim), ("clean_list", _list_claim)):
+            rows.append({"kind": name, "variant": "none", "earliest": _earliest(_audit(build(), _ledger(), judge))})
     return rows
 
 

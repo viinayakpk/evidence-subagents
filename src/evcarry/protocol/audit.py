@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from evcarry.ledger.ledger import Ledger
 from evcarry.protocol.checks import CheckContext, CheckResult, run_l0_l1
-from evcarry.protocol.judge import JudgeVerdict, LexicalJudge
+from evcarry.protocol.judge import JudgeVerdict, LexicalJudge, run_judge
 from evcarry.protocol.replayer import ReplayResult, ToolCaller, render_tool_result, replay_claim
 from evcarry.protocol.sampler import RiskContext, sample_random, sample_risk
 from evcarry.protocol.schema import Claim, SubagentReturn, ToolCallEvidence
@@ -85,17 +86,18 @@ async def audit_return(
     sampler: str | None,
     rate: float,
     seed: int,
-    judge: LexicalJudge | None = None,
+    judge: Any = None,
     require_evidence: bool = True,
     file_root=None,
 ) -> AuditReport:
     """L0/L1 failures reject even when the claim was not sampled.
 
     L2 and L3 run only on the sampled claim ids. A rate of 0 samples nothing.
+    ``judge`` is a ``LexicalJudge`` (the default) or an ``LlmJudge``.
     """
     enabled = set(checks)
     report = AuditReport()
-    lexical = judge or LexicalJudge()
+    support_judge = judge or LexicalJudge()
     ctx = CheckContext(ledger=ledger, file_root=file_root)
     l0_failures: list[tuple[str, str]] = []
     if "L0" in enabled or "L1" in enabled:
@@ -132,7 +134,7 @@ async def audit_return(
                 report.failures.append((claim.claim_id, f"L2: {replay.reason}"))
         if "L3" in enabled:
             blob = _evidence_blob(claim, ledger, replay_text)
-            verdict = lexical.judge(claim, blob)
+            verdict = await run_judge(support_judge, claim, blob)
             report.verdicts.append((claim.claim_id, verdict))
             if not verdict.supports:
                 report.failures.append((claim.claim_id, f"L3: {verdict.reason}"))

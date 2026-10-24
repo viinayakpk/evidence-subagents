@@ -1,0 +1,62 @@
+# Tool policy for Toolathlon-Gym MCP servers (gym ed735ba, image evcarry/toolathlon-gym:ed735ba).
+#
+# read_only      No side effects. The researcher sub-agent may call these, and the L2
+#                replayer may issue them again. Entries are fnmatch patterns on the
+#                server's own tool name. A tool whose MCP annotation says readOnlyHint=true
+#                counts as read-only too, unless the server is in `stateful_servers`.
+#                Anything else is a write: never replayed, only operator / SA may call it.
+# nondeterministic  Read-only, but a second call can legitimately return different text
+#                (clocks, random picks, paging cursors). L2 reports these as unverifiable
+#                instead of as drift.
+# stateful_servers  Annotations are ignored: every call depends on or changes session state.
+# volatile       Multiline regexes masked in both the logged and the replayed text before L2
+#                compares them (per-call ids that a server generates afresh every time).
+# readback       For a write, the read that shows its effect. `args` maps a read-back
+#                argument to the write argument it copies; `fixed` adds constant arguments.
+#                L2 checks the claim value against the read-back text.
+#
+# tests/unit/test_gym_tools.py checks every pattern against tests/fixtures/gym/tool_inventory.json.
+
+read_only:
+  rail_12306: ["get-*"]
+  arxiv-latex: ["get_*", "list_*"]
+  arxiv_local: [search_papers, list_papers, read_paper]
+  canvas: [canvas_health_check, "canvas_list_*", "canvas_get_*"]
+  emails: [get_emails, read_email, search_emails, get_folders, get_mailbox_stats, get_unread_count,
+           check_connection, get_email_headers, get_drafts]
+  fetch: ["fetch_*"]
+  google_calendar: [get_event, list_events]
+  google_forms: [get_form, get_form_responses]
+  howtocook: ["mcp_howtocook_*"]
+  memory: [read_graph, search_nodes, open_nodes]
+  notion: ["API-get-*", "API-retrieve-*", API-post-database-query, API-post-search]
+  pdf-tools: [read_pdf_pages, get_pdf_info, "search_pdf_*"]
+  pptx: [list_presentations, get_server_info]
+  scholarly: ["search-*"]
+  snowflake: [list_databases, list_schemas, list_tables, describe_table, read_query]
+  terminal: [show_security_rules]
+  woocommerce: ["woo_*_list", "woo_*_get", "woo_reports_*", woo_system_status]
+  yahoo-finance: ["get_*"]
+  youtube: ["*"]
+  youtube-transcript: ["*"]
+
+nondeterministic:
+  rail_12306: [get-current-date]
+  filesystem: [get_file_info, list_directory_with_sizes]
+  howtocook: [mcp_howtocook_recommendMeals, mcp_howtocook_whatToEat]
+  pdf-tools: [search_pdf_next_page, search_pdf_prev_page, search_pdf_go_page]
+  youtube: [channels_navigateList]
+  emails: [get_unread_count, get_mailbox_stats]
+
+stateful_servers: [playwright_with_chunk]
+
+volatile:
+  snowflake: ['^data_id: [0-9a-f-]+$']
+
+readback:
+  filesystem-write_file: {tool: filesystem-read_text_file, args: {path: path}}
+  filesystem-edit_file: {tool: filesystem-read_text_file, args: {path: path}}
+  excel-write_data_to_excel: {tool: excel-read_data_from_excel, args: {filepath: filepath, sheet_name: sheet_name}}
+  excel-create_workbook: {tool: excel-get_workbook_metadata, args: {filepath: filepath}}
+  excel-create_worksheet: {tool: excel-get_workbook_metadata, args: {filepath: filepath}}
+  emails-send_email: {tool: emails-search_emails, args: {query: subject}, fixed: {folder: Sent}}
