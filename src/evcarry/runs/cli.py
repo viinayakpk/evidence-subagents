@@ -44,7 +44,8 @@ def contaminated_table(run_ends: list[dict]) -> str:
     lines = ["contaminated runs (counted as failures):", "task | arm | seed | grader passed | tool calls (markers)"]
     for row in sorted(flagged, key=lambda item: (str(item.get("task")), str(item.get("arm")), item.get("seed") or 0)):
         calls = "; ".join(
-            f"{hit.get('call_id')} {hit.get('tool')} ({hit.get('markers')})" for hit in row.get("ground_truth_suspects") or []
+            [f"{hit.get('call_id')} {hit.get('tool')} ({hit.get('markers')})" for hit in row.get("ground_truth_suspects") or []]
+            + [f"{hit.get('call_id')} {hit.get('tool')} (obtained)" for hit in row.get("ground_truth_obtained") or []]
         )
         lines.append(f"{row.get('task')} | {row.get('arm')} | {row.get('seed')} | {row.get('eval_passed')} | {calls}")
     return "\n".join(lines)

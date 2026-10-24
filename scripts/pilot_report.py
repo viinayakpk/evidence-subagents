@@ -343,7 +343,10 @@ def report(run_dir: Path, planned: dict[str, int] | None, headline_runs_per_arm:
                 if kind == "run_end":
                     if event.get("contaminated"):
                         hits = "; ".join(f"{h.get('tool')} ({h.get('markers')})" for h in event.get("ground_truth_suspects") or [])
-                        contaminated.append([event.get("task"), arm, event.get("seed"), event.get("eval_passed"), hits])
+                        hits += "".join(f"; {h.get('tool')} (obtained)" for h in event.get("ground_truth_obtained") or [])
+                        # "attempted" or "obtained" from 2026-10-25 (env.contamination); older traces have no tier.
+                        contaminated.append([event.get("task"), arm, event.get("seed"), event.get("eval_passed"),
+                                             event.get("contamination_tier") or "-", hits])
                     if event.get("cost_ceiling"):
                         ceilings[arm] += 1
                 elif kind == "llm_error":
@@ -356,7 +359,7 @@ def report(run_dir: Path, planned: dict[str, int] | None, headline_runs_per_arm:
                     errors[(arm, "env_error")] += 1
     out.append(
         "### Contaminated runs (counted as failures)\n\n"
-        + (_table(["task", "arm", "seed", "grader passed", "flagged calls"], contaminated) if contaminated else "none")
+        + (_table(["task", "arm", "seed", "grader passed", "tier", "flagged calls"], contaminated) if contaminated else "none")
         + "\n\n### Cost-ceiling aborts\n\n"
         + (_table(["arm", "runs stopped at $ ceiling"], [[arm, ceilings[arm]] for arm in arms]) if ceilings else "none")
         + "\n\n### Errors\n\n"
