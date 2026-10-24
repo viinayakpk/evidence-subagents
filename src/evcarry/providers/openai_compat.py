@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
+from collections.abc import Callable, Sequence
 from collections import deque
 from datetime import datetime, timezone
 from contextvars import ContextVar
@@ -36,12 +38,34 @@ from evcarry.trace.writer import current_writer
 _HTTP_BODIES: ContextVar[list[dict[str, Any]] | None] = ContextVar("evcarry_http_bodies", default=None)
 
 # Waits between attempts of one model call after a 429, a 5xx or a dropped connection. Each attempt
-# is the OpenAI client's request with its own two quick retries (about 4 s); DeepInfra's shared pool
+# is the OpenAI client's request with its own two quick retries (about 4 s), and on the endpoint-set
+# route OpenRouter already moves a 429 to the next endpoint inside one request. DeepInfra's shared pool
 # answered "engine_overloaded" 429s for minutes at a time during the pilot (2026-10-24), and a run that
-# fails mid-way is redone from scratch, so a call waits up to about 13 minutes. Unanswered requests are
-# not billed. The same for every arm and for the judge.
-RETRY_WAITS_S: tuple[float, ...] = (5.0, 15.0, 30.0, 60.0, 120.0, 240.0, 300.0)
+# fails mid-way is redone from scratch, so a call keeps trying for about 10 minutes. Waits grow
+# exponentially from 2 s and are capped at 60 s, so a call never sleeps for minutes after the provider
+# has recovered; each wait is drawn from [c/2, c] ("equal jitter") so parallel runs that hit the same
+# 429 do not retry in lockstep. Unanswered requests are not billed. The same for every arm and the judge.
+RETRY_BASE_S = 2.0
+RETRY_CAP_S = 60.0
+RETRY_WINDOW_S = 600.0
 _RETRYABLE = (RateLimitError, InternalServerError, APIConnectionError)
+
+
+def jittered_waits(
+    *,
+    base: float = RETRY_BASE_S,
+    cap: float = RETRY_CAP_S,
+    window: float = RETRY_WINDOW_S,
+    rng: random.Random | None = None,
+) -> list[float]:
+    """Equal-jitter exponential backoff: wait n is drawn from [c/2, c], c = min(cap, base * 2**n), until the waits sum to ``window``."""
+    draw = rng or random
+    waits: list[float] = []
+    while sum(waits) < window:
+        ceiling = min(cap, base * 2 ** len(waits))
+        waits.append(ceiling / 2 + draw.uniform(0, ceiling / 2))
+    return waits
+
 
 _ROUTING_KEYS = (
     "order",
@@ -204,7 +228,8 @@ class RecordingModel(OpenAIChatCompletionsModel):
         self.extra_headers = dict(extra_headers or {})
         self.history: list[LlmCallRecord] = []
         self._pending: deque[LlmCallRecord] = deque()
-        self.retry_waits = RETRY_WAITS_S
+        # Waits between attempts, drawn afresh for each call (tests set a fixed sequence).
+        self.retry_waits: Callable[[], Sequence[float]] | Sequence[float] = jittered_waits
 
     def take_record(self) -> LlmCallRecord | None:
         if not self._pending:
@@ -301,8 +326,9 @@ class RecordingModel(OpenAIChatCompletionsModel):
         bucket: list[dict[str, Any]] = []
         token = _HTTP_BODIES.set(bucket)
         started = time.perf_counter()
+        waits = self.retry_waits() if callable(self.retry_waits) else self.retry_waits
         try:
-            for wait in (*self.retry_waits, None):
+            for wait in (*waits, None):
                 try:
                     response = await super().get_response(
                         system_instructions,

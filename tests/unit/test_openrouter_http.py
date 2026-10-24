@@ -1,11 +1,19 @@
 import json
+import random
 
 import httpx2
 from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from openai import AsyncOpenAI
 
-from evcarry.providers.openai_compat import RecordingModel, capture_http_body, openrouter_headers
+from evcarry.providers.openai_compat import (
+    RETRY_CAP_S,
+    RETRY_WINDOW_S,
+    RecordingModel,
+    capture_http_body,
+    jittered_waits,
+    openrouter_headers,
+)
 
 
 async def test_openrouter_routing_headers_and_served_identity() -> None:
@@ -263,3 +271,47 @@ async def test_an_overloaded_provider_is_retried_before_the_call_fails() -> None
             previous_response_id=None, conversation_id=None, prompt=None,
         )
     await http.aclose()
+
+
+def test_jittered_waits_grow_from_two_seconds_cap_at_a_minute_and_span_ten_minutes() -> None:
+    for seed in range(20):
+        waits = jittered_waits(rng=random.Random(seed))
+        for n, wait in enumerate(waits):
+            ceiling = min(RETRY_CAP_S, 2.0 * 2**n)
+            assert ceiling / 2 <= wait <= ceiling
+        assert sum(waits) >= RETRY_WINDOW_S and sum(waits[:-1]) < RETRY_WINDOW_S
+        assert max(waits) <= 60.0 and waits[0] <= 2.0
+    assert jittered_waits(rng=random.Random(1)) != jittered_waits(rng=random.Random(2))  # runs do not retry in lockstep
+
+
+async def test_each_call_draws_its_own_waits() -> None:
+    drawn: list[int] = []
+
+    def waits() -> list[float]:
+        drawn.append(1)
+        return [0.0]
+
+    statuses = iter([429, 200, 429, 200])
+    ok = {
+        "id": "gen-3", "object": "chat.completion", "created": 0, "model": "m", "provider": "DeepInfra",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        status = next(statuses)
+        return httpx2.Response(status, json=ok if status == 200 else {"error": {"message": "Provider returned error", "code": 429}})
+
+    http = httpx2.AsyncClient(transport=httpx2.MockTransport(handler), event_hooks={"response": [capture_http_body]})
+    client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key="test-not-real", http_client=http, max_retries=0)
+    model = RecordingModel("deepseek/deepseek-v4.1-flash-1017", client, kind="openrouter")
+    model.retry_waits = waits
+    try:
+        for _ in range(2):
+            await model.get_response(
+                "sys", "hi", ModelSettings(temperature=0.0), [], None, [], ModelTracing.DISABLED,
+                previous_response_id=None, conversation_id=None, prompt=None,
+            )
+    finally:
+        await http.aclose()
+    assert len(drawn) == 2 and [record.attempts for record in model.history] == [2, 2]
