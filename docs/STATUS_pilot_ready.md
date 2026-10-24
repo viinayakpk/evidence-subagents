@@ -94,6 +94,25 @@ It confirmed:
 - the pin check passes on the real response and rejects a priority-tier reply;
 - the swap rule is deterministic and matches the doc.
 
+## Decided and implemented before the pilot (2026-10-24, evening)
+
+The owner approved five of the decisions below. Each is implemented with tests and documented in the README and the plan:
+
+| Decision | What the harness does now | Commit |
+| --- | --- | --- |
+| 1 (audit budget) | Every sub-agent return with a claim gets `max(1, round_half_up(r × claims))` L2/L3 audits when r > 0; the same budget feeds the risk and the random sampler. Read as a floor: "at least one, on top of the rate", not rate + 1. | `995458a` |
+| 2 (temperature) | Temperature 0 on every agent, sub-agent, repair, re-delegation and judge call, every arm and provider; sent explicitly. `llm_call`, `llm_error` and `judge_call` log the value in the request body; `run_start` logs `temperature` and `judge_temperature`. | `ae9fabe` |
+| 6 (retry asymmetry) | Each sub-agent keeps one conversation per run in every delegating arm (self-verify included); main-agent calls, repairs and re-delegations continue it. Calls to one sub-agent are serialised. | `536850f`, `6e6802e` |
+| 8 (ground-truth reach) | Pre-registered in the plan: a run with any `ground_truth_suspects` is `contaminated`, counts as a failure (`passed: false`, grader result in `eval_passed`), is a column in `index.parquet`, and is listed by `evcarry summarize` and `scripts/pilot_report.py`. | `7f1ef6a` |
+| G (spend limits) | `budget.run_ceiling_usd: 0.25` (agent + judge spend; the run's next call is refused, status `cost_ceiling`, failed, ungraded, spend kept); `limits.max_steps: 40` and `limits.subagent_max_turns: 40`; admission reserves 1.2 × the ceiling per run in flight so the caps ($5 pilot, $45 headline) hold; a reservation-only refusal waits for a run to end. | `a87b60a`, `6e6802e` |
+
+An independent review of these changes found no blocker. Its fixes are in `e3d83d0` (an import cycle) and `6e6802e`. Its other points are for the owner and are measured by the pilot (`docs/PILOT_RESULTS.md`): the same $0.25 and 40/40 turns are not the same constraint for SA and the delegating arms; the cap is hard only while no run ends above 1.2 × the ceiling.
+
+Two launch failures were fixed before any run finished. Both are harness or config bugs, and neither changes an arm:
+
+- `8ae8b21`: OpenRouter let `deepinfra/fp8/priority` (1.5× price) serve under the `deepinfra/fp8` slug, and the pin check stopped the run. The route now sends `service_tier: default`.
+- `b61648a`: DeepInfra's standard tier answered `429 engine_overloaded`, and one 429 ended a run. Calls are now retried for about 4 minutes.
+
 ## Owner decisions, before the pilot unless noted
 
 1. **Audit budget (REVIEW B, not changed).** At r = 0.3, a return with one claim is never audited (`round(0.3 × 1) = 0`); 2–4 claims get one audit. If sub-agents return one or two claims, `evidence_risk` audits little and behaves like L0/L1 only. Options: at least one sampled claim per return when r > 0, or carry the fractional budget across a run's returns. Recommendation: decide before the pilot, because this defines the method arm.
@@ -111,7 +130,7 @@ It confirmed:
 Known open items from `docs/REVIEW.md` that the pilot will surface and that this branch did not change:
 
 - C: the fault injector is fixture-specific; it matters at M6.
-- G: there is no per-run cost ceiling; sub-agents get 100 turns.
+- G: done (see above).
 - I: the risk features `hit_limits`, `had_errors` and `finished_very_fast` are never set.
 - J: L2 compares a read's full text with its replay, so a later legitimate write causes false rejects in the audited arms.
 - K: judge evidence is cut at 12,000 characters.

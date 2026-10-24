@@ -24,7 +24,7 @@ What it took beyond wiring, all outside the submodule (which is unmodified):
 | --- | --- | --- |
 | notion, canvas, fetch, woocommerce, playwright servers not built by the gym Dockerfile; google-sheets has no venv | those servers cannot start | `docker/gym/overlay.Dockerfile` builds them |
 | canvas, notion, woocommerce import `pg` without declaring it | build fails | overlay installs `pg@^8.20` |
-| woocommerce, canvas, notion ship Postgres routers that nothing constructs | every call goes to `localhost:8081`, `:8080` or api.notion.com and fails | `docker/gym/wire_pg_routers.py` (six anchored edits) |
+| woocommerce, canvas, notion ship Postgres routers that nothing constructs | every call goes to `localhost:8081`, `:8080` or api.notion.com and fails | `docker/gym/wire_pg_routers.py` (six anchored edits; from 2026-10-25 also eight edits that give the Notion mock the API's property shape, see `docs/STATUS_fixes.md`) |
 | `python_execute` runs `uv run` inside `/workspace`, the gym's own uv project | first call per container downloads ~250 packages | overlay pre-builds that environment from `uv.lock` |
 | snowflake `read_query` output has a fresh `data_id` uuid per call | every L2 replay would drift | `volatile` masks in `configs/gym_tools.yaml` |
 | raw MCP input schemas contain type lists, `anyOf` with null, untyped array items | some OpenAI-compatible APIs reject such tool schemas | schemas are rewritten as the gym's own agent rewrites them (`normalize_schema`) |

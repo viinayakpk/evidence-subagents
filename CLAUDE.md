@@ -26,15 +26,22 @@ on the OpenAI Agents SDK, with Toolathlon-Gym as the task environment.
 - prompts/gym_v1 is NOT frozen; the owner freezes it after the pilot
   (`uv run evcarry prompts freeze prompts/gym_v1`). The headline refuses to run
   until it is frozen.
+- Pilot done (docs/PILOT_RESULTS.md, docs/PILOT_DIAGNOSIS.md). The free fixes
+  from the diagnosis and the pre-registered amendments A1-A12 (plan, 25 Oct) are
+  in docs/STATUS_fixes.md. The primary headline is tasks/headline60.txt (subset70
+  minus pilot10); fixes are verified on tasks/dev.txt, never on pilot10.
 
 ## Next steps (in order)
-1. Owner decisions listed in docs/STATUS_pilot_ready.md.
-2. Pilot (M4): `uv run evcarry run configs/experiments/pilot_deepseek.yaml`
+1. Run `uv run pytest`, rebuild the gym images (`make gym-images`) and run the
+   docker tests; then `scripts/recheck_pilot.py runs/pilot_deepseek`
+   (docs/STATUS_fixes.md has the exact commands).
+2. Owner decisions listed in docs/STATUS_fixes.md (budget fit, arms, A9).
+3. Dev verification (~$1): `uv run evcarry run configs/experiments/dev_verify.yaml`
    (load the key with `set -a; source .env; set +a`; never print .env).
-3. Hand-label the judge sample (`scripts/judge_validation.py`), then freeze the
+4. Hand-label the judge sample (`scripts/judge_validation.py`), then freeze the
    prompts.
-4. Headline (M5): `make headline`.
-5. Local model (Qwen3.8-Flash-Next NVFP4 via vLLM) comes LAST (M6); it also
+5. Headline (M5): `make headline`.
+6. Local model (Qwen3.8-Flash-Next NVFP4 via vLLM) comes LAST (M6); it also
    re-judges the judge-validation sample as a second judge.
 
 ## Rules
