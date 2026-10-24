@@ -95,7 +95,7 @@ def test_openrouter_identity_and_models_yaml() -> None:
     assert pinned.x_title == "evcarry"
 
 
-def test_no_real_keys_in_repo() -> None:
+def test_no_real_keys_in_repo(monkeypatch) -> None:
     root = Path(__file__).resolve().parents[2]
     banned = []
     skip = {".venv", ".git", "third_party", "runs", "__pycache__"}
@@ -115,5 +115,6 @@ def test_no_real_keys_in_repo() -> None:
     example = (root / ".env.example").read_text(encoding="utf-8")
     assert "OPENROUTER_API_KEY=" in example
     assert "DEEPSEEK_API_KEY=" in example
-    os.environ["OPENROUTER_API_KEY"] = "test-not-real"
+    # monkeypatch restores the variable; a bare os.environ write leaked into later tests.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-real")
     assert os.environ["OPENROUTER_API_KEY"] == "test-not-real"
