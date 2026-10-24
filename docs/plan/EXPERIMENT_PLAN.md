@@ -438,6 +438,7 @@ MS-Eval (Oct 2026) pairs each sub-agent run with a single-agent run on the same 
 | DeepSeek pilot + headline (direct API, original plan) | $0.15 miss / $0.003 hit / $0.60 output per M (off-peak) | $0.060 + $0.005 + $0.024 = $0.089 | 600 | about $53; range $30 to $110 |
 | DeepSeek-V4.1-Flash-1017 via OpenRouter, DeepInfra fp8 (used since 24 Oct) | $0.098 miss / $0.00294 hit / $0.294 output per M, no peak | $0.039 + $0.005 + $0.012 = $0.056 | 600 | about $34, plus the L3 judge (well under $0.01 per judged claim) |
 | Same, worst case over the fp8 endpoint set (every call at the larger rate of each component: $0.098 / $0.008 / $0.50) | as left | $0.039 + $0.013 + $0.020 = $0.072 | 560 (headline) | about $40, plus the judge; fits the $45 cap while cache hits stay at or above about 76% |
+| Measured in the M4 pilot (2026-10-24; 92% of calls on InferenceNet, 92% cache hits, judge included) | as served | per finished run: SA $0.024, vanilla $0.108, self-verify $0.169, evidence + risk $0.187 (mean $0.122) | 560 (headline) | about $68 (upper bound $73; at DeepInfra rates $47): over the $45 cap, owner decision pending (`docs/PILOT_RESULTS.md`) |
 | Mock tests, M6 judging, labeling | - | - | - | $0 API |
 | Local runs (M6) | GPU time, electricity | About 160M output tokens; 2 to 4 days of pure decoding at measured batch speeds | about 4,000 | 5 to 10 GPU days; at an assumed 0.6 kW, 8 days is about 115 kWh |
 | Optional Claude Sonnet 5 | $2 / $0.20 / $10 per M | about $1.52 | 210 | about $320 |
