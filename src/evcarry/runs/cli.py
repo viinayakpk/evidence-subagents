@@ -33,7 +33,21 @@ def summarize(run_dir: Path) -> str:
         for column in ("task", "arm", "seed", "passed", "status", "cost_usd", "input_tokens", "output_tokens")
         if column in frame.columns
     ]
-    return frame[columns].to_string(index=False)
+    return "\n\n".join([frame[columns].to_string(index=False), contaminated_table(rows)])
+
+
+def contaminated_table(run_ends: list[dict]) -> str:
+    """Runs that reached for ground truth. Pre-registered: each counts as a failure, whatever the grader said."""
+    flagged = [row for row in run_ends if row.get("contaminated")]
+    if not flagged:
+        return "contaminated runs (counted as failures): none"
+    lines = ["contaminated runs (counted as failures):", "task | arm | seed | grader passed | tool calls (markers)"]
+    for row in sorted(flagged, key=lambda item: (str(item.get("task")), str(item.get("arm")), item.get("seed") or 0)):
+        calls = "; ".join(
+            f"{hit.get('call_id')} {hit.get('tool')} ({hit.get('markers')})" for hit in row.get("ground_truth_suspects") or []
+        )
+        lines.append(f"{row.get('task')} | {row.get('arm')} | {row.get('seed')} | {row.get('eval_passed')} | {calls}")
+    return "\n".join(lines)
 
 
 def check_config(path: Path) -> str:

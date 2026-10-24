@@ -1,4 +1,9 @@
-"""Parquet index of run_end rows."""
+"""Parquet index of run_end rows.
+
+``passed`` is the result the paper counts; ``eval_passed`` is the grader's own.
+They differ when a run is ``contaminated`` (it reached for ground truth) or
+stopped at its cost ceiling: both count as failures.
+"""
 
 from __future__ import annotations
 
@@ -22,10 +27,15 @@ def write_index(run_dir: Path) -> Path:
                         "model": event.get("model"),
                         "seed": event.get("seed"),
                         "passed": event.get("passed"),
+                        "eval_passed": event.get("eval_passed", event.get("passed")),
+                        "contaminated": bool(event.get("contaminated", False)),
                         "status": event.get("status"),
+                        "agent_status": event.get("agent_status"),
                         "input_tokens": event.get("input_tokens"),
                         "output_tokens": event.get("output_tokens"),
                         "cost_usd": event.get("cost_usd"),
+                        "judge_cost_usd": event.get("judge_cost_usd"),
+                        "spend_usd": event.get("spend_usd"),
                     }
                 )
     if not rows:
@@ -36,10 +46,15 @@ def write_index(run_dir: Path) -> Path:
                 "model": pa.array([], type=pa.string()),
                 "seed": pa.array([], type=pa.int64()),
                 "passed": pa.array([], type=pa.bool_()),
+                "eval_passed": pa.array([], type=pa.bool_()),
+                "contaminated": pa.array([], type=pa.bool_()),
                 "status": pa.array([], type=pa.string()),
+                "agent_status": pa.array([], type=pa.string()),
                 "input_tokens": pa.array([], type=pa.int64()),
                 "output_tokens": pa.array([], type=pa.int64()),
                 "cost_usd": pa.array([], type=pa.float64()),
+                "judge_cost_usd": pa.array([], type=pa.float64()),
+                "spend_usd": pa.array([], type=pa.float64()),
             }
         )
     else:

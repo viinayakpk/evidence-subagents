@@ -420,6 +420,7 @@ MS-Eval (Oct 2026) pairs each sub-agent run with a single-agent run on the same 
 
 1. Hypotheses fixed before paid runs. H1: evidence plus risk audit halves the flip rate versus vanilla MAD. H2: at most 20% extra cost. H3: risk beats random at equal budget. H4: at r = 0.3, at least 80% catch rate with at most 5% false rejects.
 2. H1/H2 on DeepSeek (headline) and the local model; H3/H4 on the local model.
+   - **Contaminated runs (pre-registered 2026-10-24, before the pilot):** a run whose tool-call arguments reach for ground truth (the removed task files and `groundtruth` paths, the gym's git history, or its public repo `eigent-ai/toolathlon_gym` over the network; the `ground_truth_suspects` detector in `env/gym_docker.py`) counts as a failure whatever the grader says. It is flagged `contaminated` in `run_end` and `index.parquet` (the grader's own result stays in `eval_passed`), and every report lists these runs in a table (task, arm, seed, grader result, the flagged calls). They are not dropped or re-run.
 3. McNemar tests per task; bootstrap 95% intervals; mixed-effects logistic regression as a robustness check.
 4. Fault-injection results per corruption type; error analysis of every unprevented flip; cost decomposition.
 5. Threats: few natural flips on 70 tasks, the headline judge is the agent model itself (checked against hand labels and a second, local judge), one benchmark family, alias drift, provider quantization (pinned to DeepInfra fp8 and logged per call), community quantization of the local model.

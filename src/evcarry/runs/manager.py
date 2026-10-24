@@ -458,6 +458,7 @@ async def _run_one(
         )
         # A sub-agent tool or the judge may have caught the mismatch; the run still fails, without run_end.
         pin_guard.raise_if_violated()
+        verdict = final_verdict(outcome)
         events = read_events(path)
         input_tokens = 0
         output_tokens = 0
@@ -487,6 +488,7 @@ async def _run_one(
                 "model": model_config.model,
                 "seed": seed,
                 **outcome,
+                **verdict,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "cost_usd": cost,
@@ -508,6 +510,20 @@ async def _run_one(
         current_pin_guard.reset(pin_token)
         current_writer.reset(token)
         writer.close()
+
+
+def final_verdict(outcome: dict[str, Any]) -> dict[str, Any]:
+    """``passed`` as the paper counts it, next to the grader's own ``eval_passed``.
+
+    Pre-registered (owner decision 4, 2026-10-24): a run whose tool calls reached for
+    ground truth (``ground_truth_suspects``: removed task files, the gym's git history,
+    or its public repo) is ``contaminated`` and counts as a failure, whatever the
+    grader said. An ungraded run (``passed: null``) stays ungraded.
+    """
+    eval_passed = outcome.get("passed")
+    contaminated = bool(outcome.get("ground_truth_suspects"))
+    passed = False if contaminated and eval_passed is not None else eval_passed
+    return {"eval_passed": eval_passed, "contaminated": contaminated, "passed": passed}
 
 
 def _script_for(arm_name: str, overrides: dict[str, Path] | None, model_kind: str, script_dir: str) -> dict[str, Any] | None:

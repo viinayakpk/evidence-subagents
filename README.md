@@ -105,7 +105,7 @@ M6 hooks, not used yet: `serving/serve_primary.sh`, `serving/serve_fallback.sh`,
 5. If the agent called `claim_done`, run the task's `evaluation` module in the container; exit code 0 is a pass. Without `claim_done` the gym does not grade, and `passed` is false.
 6. Copy the workspace to `runs/<exp>/workspaces/`, write the ledger to `runs/<exp>/ledgers/`, then remove the run's containers (with their volumes) and network by label.
 
-`run_end` records `sealed` and `ground_truth_suspects`: ledger calls whose arguments mention ground-truth paths, the gym's git history, or its public repo (`eigent-ai`). The container still has internet access, so an agent could fetch the public repo; the suspects list is how that would show.
+`run_end` records `sealed` and `ground_truth_suspects`: ledger calls whose arguments mention ground-truth paths, the gym's git history, or its public repo (`eigent-ai`). The container still has internet access, so an agent could fetch the public repo; the suspects list is how that would show. Pre-registered (owner decision, 2026-10-24): a run with any suspect is `contaminated: true` and counts as a failure (`passed: false`; the grader's result is kept as `eval_passed`). `index.parquet` has both columns, and `evcarry summarize` ends with a table of contaminated runs.
 
 A task whose environment cannot start (a server, the preprocess, or a docker step fails) ends with `status: env_error` and `passed: null`; the other runs continue. Tool errors go back to the model as text. Preprocess, `python_execute` and evaluation are killed inside the container at their time limits.
 

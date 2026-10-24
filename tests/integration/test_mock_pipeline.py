@@ -358,3 +358,39 @@ async def test_run_end_splits_agent_and_judge_cost_and_counts_every_billed_event
     assert end["judge_cost_usd"] == pytest.approx(0.003)  # the lexical judge object costs 0; the failed judge call counts
     assert end["spend_usd"] == pytest.approx(0.01 + 0.002 + 0.003 + 0.005)  # the larger of table and bill, per event
     assert end["provider_reported_cost_usd"] == pytest.approx(0.02)
+
+
+async def test_a_run_that_reached_for_ground_truth_counts_as_failed_and_is_listed(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Owner decision 4 (pre-registered): a flagged run fails, is marked contaminated in the index, and is listed."""
+    import pyarrow.parquet as pq
+
+    from evcarry.runs import manager
+
+    suspects = [{"call_id": "call_7", "tool": "python_execute", "markers": "groundtruth"}]
+
+    async def leaked_run(**_kwargs):
+        return {"agent_status": "completed", "passed": True, "status": "ok", "ground_truth_suspects": suspects}
+
+    monkeypatch.setattr(manager, "_run_fixture", leaked_run)
+    config = load_experiment("configs/experiments/mock_e2e.yaml")
+    config.arms, config.tasks = ["sa"], "tests/fixtures/tasks/one_sections.txt"
+    await run_experiment(config, out_dir=tmp_path)
+    end = read_events(next(tmp_path.glob("*.jsonl")))[-1]
+    assert (end["passed"], end["eval_passed"], end["contaminated"]) == (False, True, True)
+    index = pq.read_table(tmp_path / "index.parquet").to_pylist()
+    assert [(row["passed"], row["eval_passed"], row["contaminated"]) for row in index] == [(False, True, True)]
+    main(["summarize", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert "contaminated runs (counted as failures):" in out
+    assert "fixture-sections | sa | 1 | True | call_7 python_execute (groundtruth)" in out
+
+
+def test_final_verdict() -> None:
+    from evcarry.runs.manager import final_verdict
+
+    hit = [{"call_id": "c", "tool": "t", "markers": "eigent-ai"}]
+    assert final_verdict({"passed": True}) == {"eval_passed": True, "contaminated": False, "passed": True}
+    assert final_verdict({"passed": True, "ground_truth_suspects": hit})["passed"] is False
+    assert final_verdict({"passed": False, "ground_truth_suspects": hit})["passed"] is False
+    assert final_verdict({"passed": None, "ground_truth_suspects": hit})["passed"] is None  # not graded stays not graded
+    assert final_verdict({"passed": True, "ground_truth_suspects": []})["contaminated"] is False
