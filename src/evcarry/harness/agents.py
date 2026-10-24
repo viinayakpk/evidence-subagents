@@ -11,7 +11,7 @@ from agents.tool import default_tool_error_function
 from evcarry.harness.arms import ArmSpec
 from evcarry.harness.delegate import DelegateState, make_extractor
 from evcarry.harness.hooks import LedgerHooks
-from evcarry.harness.prompts import subagent_instructions, prompt_text
+from evcarry.harness.prompts import SUBAGENT_TOOL_DESCRIPTIONS, prompt_text, subagent_instructions
 from evcarry.harness.run_settings import harness_run_config
 from evcarry.harness.tools import Toolset, build_tools
 from evcarry.inject.injector import FaultInjector
@@ -106,13 +106,10 @@ def build_main_agent(
     # Providers without json_schema response_format get the schema in the prompt
     # instead; the extractor parses the string with one repair.
     typed_output = SubagentReturn if arm.schema and model_config.json_schema_outputs else None
-    for name, allow, description in (
-        ("researcher", toolset.researcher, "Gather evidence with read-only tools and return claims."),
-        ("operator", toolset.operator, "Apply writes and return claims about the actions."),
-    ):
+    for name, allow in (("researcher", toolset.researcher), ("operator", toolset.operator)):
         sub = Agent(
             name=name,
-            instructions=subagent_instructions(prompts_dir, name, arm.schema),
+            instructions=subagent_instructions(prompts_dir, name, arm.name),
             tools=build_tools(allow, caller, toolset),
             model=_model(model_config, script, task, name),
             output_type=typed_output,
@@ -136,11 +133,12 @@ def build_main_agent(
                 state=state,
                 max_turns=max_turns,
                 judge=judge,
+                prompts_dir=prompts_dir,
             )
         sub_tools.append(
             sub.as_tool(
                 tool_name=name,
-                tool_description=description,
+                tool_description=SUBAGENT_TOOL_DESCRIPTIONS[name],
                 custom_output_extractor=extractor,
                 hooks=hooks,
                 # The SDK default is 10 turns per nested run, far below a gym task's budget.

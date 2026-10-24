@@ -18,6 +18,7 @@ from typing import Any
 from agents import Runner
 
 from evcarry.harness.hooks import LedgerHooks
+from evcarry.harness.prompts import repair_prompt
 from evcarry.harness.run_settings import harness_run_config
 from evcarry.inject.corruptions import CorruptionError
 from evcarry.inject.injector import FaultInjector
@@ -50,7 +51,9 @@ def _continued(run_result: Any, message: str) -> list[Any]:
     return [*run_result.to_input_list(), {"role": "user", "content": message}]
 
 
-async def _coerce(run_result: Any, agent: Any, hooks: LedgerHooks, max_turns: int) -> tuple[SubagentReturn, Any]:
+async def _coerce(
+    run_result: Any, agent: Any, hooks: LedgerHooks, max_turns: int, prompts_dir: str | None = None
+) -> tuple[SubagentReturn, Any]:
     """The parsed return and the run it came from (the repair run when one was needed)."""
     output = run_result.final_output
     if isinstance(output, SubagentReturn):
@@ -60,13 +63,9 @@ async def _coerce(run_result: Any, agent: Any, hooks: LedgerHooks, max_turns: in
         parsed, _repairs = parse_subagent_return(text)
         return parsed, run_result
     except FailedReturn as first:
-        repair_prompt = (
-            "The previous structured return did not match the schema. "
-            f"Return one JSON object only.\n{first}"
-        )
         repaired = await Runner.run(
             agent,
-            _continued(run_result, repair_prompt),
+            _continued(run_result, repair_prompt(prompts_dir, str(first))),
             hooks=hooks,
             max_turns=max_turns,
             run_config=harness_run_config(),
@@ -93,9 +92,10 @@ def make_extractor(
     state: DelegateState,
     max_turns: int,
     judge: Any = None,
+    prompts_dir: str | None = None,
 ):
     async def _review(run_result: Any, prior: int) -> str:
-        payload, run_result = await _coerce(run_result, agent, hooks, max_turns)
+        payload, run_result = await _coerce(run_result, agent, hooks, max_turns, prompts_dir)
         index = state.return_index
         state.return_index += 1
         decision_inject = None

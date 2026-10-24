@@ -121,15 +121,19 @@ The images (`scripts/build_gym_images.sh`): the gym's own Dockerfile unchanged, 
 | --- | --- | --- | --- |
 | `sa` | no | no | none |
 | `vanilla_mad` | yes | free text | none |
-| `self_verify` | yes | free text, different system prompt | none |
-| `typed` | yes | `SubagentReturn`, evidence may be empty | pointers skipped |
+| `self_verify` | yes | free text; sub-agents re-check their values and quote the tool output behind each; the main agent checks the quotes | none |
+| `typed` | yes | `SubagentReturn` with empty evidence (same rules as evidence otherwise) | pointers skipped |
 | `evidence` | yes | yes | L0/L1, sample rate 0 |
 | `evidence_random` | yes | yes | L0–L3, random sample |
 | `evidence_risk` | yes | yes | L0–L3, risk sample |
 
 The L3 judge is `judge_model` in the experiment YAML: `lexical`, or any `configs/models.yaml` key (`deepseek_flash`, `openrouter_pinned`, `local_primary`, `mock_judge`). An LLM judge gets the fixed prompt `prompts/v1/judge.md` and returns `{"verdict": "supported" | "contradicted" | "incomplete" | "unverifiable", "missing": [...], "reason": ...}`; only `supported` passes. Each call is a `judge_call` trace event (prompt and request hashes, raw reply, tokens, cost); `run_end` has `judge_calls` and `judge_cost_usd`, and a billable judge counts toward the spend cap. If a call or its parse fails, the lexical judge decides and the verdict says `lexical_fallback`.
 
-The arm name picks the sampler. YAML supplies the rate for the spot-check arms. L0/L1 failures reject a return even when that claim was not sampled. The policy accepts, or re-delegates once with the failed claims named, then falls back to the main agent. There is no third attempt.
+The arm name picks the sampler. YAML supplies the rate for the spot-check arms. L0/L1 failures reject a return even when that claim was not sampled. The policy accepts, or re-delegates once with the failed claims named, then returns a `FALLBACK` message to the main agent, which re-plans the step and delegates it again (it has no workspace tools in any delegating arm). There is no third attempt on the same call.
+
+Prompts (`prompts/gym_v1`): every delegating arm's main prompt is the same preamble byte for byte, followed by one arm block that says what the sub-agents reply with (and, in the audited arms only, how citations are checked and what `FALLBACK` means). Sub-agents get the same role prompt in every arm plus the arm's return format: `return_text.md` (vanilla), `return_text_self_verify.md`, `return_typed.md`, `return_claims.md` (evidence arms). The two sub-agent tool descriptions are the same in every arm. A repair uses `repair.md`.
+
+Prompt freeze: `evcarry prompts status [DIR]` prints the hash of every model-visible text the prompt set produces (main and sub-agent prompts per arm, sub-agent and local tool descriptions, repair, re-delegation and `FALLBACK` messages, the tool-result header, the judge prompt), rendered as runs render them, so a change in code counts too. `evcarry prompts freeze DIR` writes `DIR/FROZEN.json`; the owner runs it once the pilot is done. A billable run refuses (exit `6`) when a frozen set has changed, and a config with `require_frozen_prompts: true` (headline, local core) refuses unless the set is frozen and unchanged. Every `run_start` records `prompt_manifest_sha256` and `prompts_frozen`. `gym_v1` is not frozen yet.
 
 The fault injector is off unless an experiment sets `inject`. The decision key is `task|seed|return_index` and does not include the arm. `make fault-mock` prints the synthetic catch table. Notebook `analysis/03_fault_injection.ipynb` calls the same function.
 
@@ -137,7 +141,7 @@ The fault injector is off unless an experiment sets `inject`. The decision key i
 
 One JSONL file per run: `{task}__{arm}__{model}__{seed}.jsonl`. A run is finished when a `run_end` event exists. A restart skips that file and does not rewrite it. An unfinished trace is kept as `{name}.jsonl.aborted-{n}` and the run starts again; its calls still count toward the spend cap, which starts from every `llm_call` and `judge_call` cost already in the output directory. Events include `run_start`, `llm_call`, `llm_error` (a model call that raised), `tool_call`, `subagent_return`, `subagent_error` (a sub-agent run or its audit raised), `injection` (`applied: false` when the corruption did not fit the claim), `check`, `audit`, `policy`, `judge_call`, `run_end`. JSONL is the source of truth.
 
-The system prompt is the frozen file under `prompts/v1/` and is the cache prefix. The task's `docs/task.md` is the user message. The gym `agent_system_prompt.md` is hashed into `run_start` and is not sent. Tool names are sorted.
+The system prompt is the arm's file under the experiment's prompt set (`prompts/v1/` for fixtures, `prompts/gym_v1/` for gym tasks) and is the cache prefix. The task's `docs/task.md` is the user message. The gym `agent_system_prompt.md` is hashed into `run_start` and is not sent. Tool names are sorted.
 
 ## Deviations
 
@@ -156,6 +160,7 @@ The system prompt is the frozen file under `prompts/v1/` and is the cache prefix
 13. L1 and L2 do not look for a `derived` claim's value in the cited output (a count or rate is computed, not quoted); its spans are still checked. Only L3 checks the value, and only on sampled claims (see `docs/STATUS_gym_judge.md`).
 14. L2 reports `unverifiable` (not a failure) for a write with no read-back in `configs/gym_tools.yaml` and for reads marked nondeterministic there. L3 still runs on those claims.
 15. Gym runs use `prompts/gym_v1/` (the gym's workspace and `claim_done` instructions, a fixed workspace path so the system prompt is byte-identical across runs, and a return-format section per arm). Tool results carry a `[call_id: ...]` header so a real model can cite them.
+18. After two rejections the plan has the main agent do the sub-task itself. Here the main agent has no workspace tools in any delegating arm, so `FALLBACK` tells it to re-plan the step and delegate it again, which is what the evidence prompt says.
 16. DeepSeek and the OpenRouter DeepSeek route have `json_schema_outputs: false`: typed and evidence sub-agents get the claim schema in the prompt and their text is parsed (one repair), because DeepSeek documents `json_object` but not `json_schema`.
 17. Sub-agent runs get the experiment's `max_steps` as their turn limit (the SDK default is 10).
 

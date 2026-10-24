@@ -7,6 +7,7 @@ audit: {sampler: risk, rate: 0.3, checks: [L0, L1, L2, L3]}
 judge_model: local_primary
 limits: {max_steps: 100, max_seconds: 7200, context: 131072}
 prompts: prompts/gym_v1
+require_frozen_prompts: true
 budget: {cap_usd: 0, schedule: any}
 parallel_tasks: 4
 out: runs/local_core

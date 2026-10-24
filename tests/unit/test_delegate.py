@@ -88,7 +88,7 @@ async def test_repair_continues_the_conversation_and_fences_cost_no_repair() -> 
     first = await Runner.run(agent, INSTRUCTION)
     await _extractor(agent, _Events())(first)
     assert INSTRUCTION in model.inputs[1]
-    assert "did not match the schema" in model.inputs[1]
+    assert "not valid JSON for the claim schema" in model.inputs[1]  # the text of repair.md
 
     fenced = _InputsModel([ScriptStep(content=_return(14, fenced=True))])
     agent = Agent(name="researcher", instructions="You are the researcher.", model=fenced)

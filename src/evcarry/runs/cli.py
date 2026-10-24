@@ -110,6 +110,18 @@ def gym_command(action: str, tasks: Path | None = None, parallel: int = 4) -> st
     return "\n".join(lines)
 
 
+def prompts_command(action: str, prompts_dir: str) -> str:
+    import json
+
+    from evcarry.harness import prompt_freeze
+    from evcarry.runs.manager import git_commit
+
+    if action == "freeze":
+        path = prompt_freeze.freeze(prompts_dir, git_commit=git_commit())
+        return f"froze {prompts_dir}: {json.loads(path.read_text(encoding='utf-8'))['manifest_sha256']} -> {path}"
+    return json.dumps(prompt_freeze.status(prompts_dir).as_dict(), indent=2)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="evcarry")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -128,6 +140,12 @@ def main(argv: list[str] | None = None) -> None:
     gym.add_argument("action", choices=["check", "clean"])
     gym.add_argument("--tasks", type=Path, help="with check: start and stop each listed task's environment")
     gym.add_argument("--parallel", type=int, default=4)
+    prompts = sub.add_parser(
+        "prompts",
+        help="prompt-set freeze: `status` (manifest hash and what changed) or `freeze` (write FROZEN.json; owner only)",
+    )
+    prompts.add_argument("action", choices=["status", "freeze"])
+    prompts.add_argument("prompts_dir", nargs="?", default="prompts/gym_v1")
     args = parser.parse_args(argv)
     try:
         if args.command == "check":
@@ -138,6 +156,9 @@ def main(argv: list[str] | None = None) -> None:
             return
         if args.command == "gym":
             print(gym_command(args.action, args.tasks, args.parallel))
+            return
+        if args.command == "prompts":
+            print(prompts_command(args.action, args.prompts_dir))
             return
         config = load_experiment(args.config)
         if args.dry_run:

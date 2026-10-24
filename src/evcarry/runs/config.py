@@ -74,6 +74,9 @@ class ExperimentConfig(_Strict):
     judge_model: str = "lexical"
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     prompts: str = "prompts/v1"
+    # True: refuse to run unless the prompt set is frozen (FROZEN.json) and unchanged.
+    # A billable run always refuses a frozen set that has changed.
+    require_frozen_prompts: bool = False
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     parallel_tasks: int = 1
     out: str = "runs/out"

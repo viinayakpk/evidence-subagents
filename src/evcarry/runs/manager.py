@@ -110,6 +110,20 @@ def check_frozen_inputs(config: ExperimentConfig) -> None:
                 raise FrozenInputMismatch(f"{GYM_SUBMODULE} is at {head}, not the frozen gym commit {gym_commit()}.")
 
 
+def check_prompt_freeze(config: ExperimentConfig, *, billable: bool) -> dict[str, object]:
+    """Refuse a run whose prompt set changed after it was frozen (billable runs), or is not frozen when required."""
+    from evcarry.harness import prompt_freeze
+
+    found = prompt_freeze.status(config.prompts)
+    if found.state == "changed" and (billable or config.require_frozen_prompts):
+        raise FrozenInputMismatch(
+            f"{config.prompts} changed after it was frozen ({prompt_freeze.FREEZE_FILE}): {', '.join(found.changed) or 'manifest'}"
+        )
+    if found.state != "match" and config.require_frozen_prompts:
+        raise FrozenInputMismatch(f"{config.experiment} requires a frozen prompt set; {config.prompts} is {found.state}.")
+    return found.as_dict()
+
+
 def load_script_file(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -180,6 +194,7 @@ def dry_run_report(config: ExperimentConfig) -> str:
         f"schedule: {config.budget.schedule}",
         f"cap_usd: {config.budget.cap_usd}",
         f"parallel_tasks: {config.parallel_tasks}",
+        f"prompts: {config.prompts} {_prompt_state(config)}",
         "grid:",
     ]
     for task, arm, seed in grid(config):
@@ -194,6 +209,14 @@ def dry_run_report(config: ExperimentConfig) -> str:
             lines.append("routing: " + json.dumps(model.routing, sort_keys=True))
     lines.append("api keys: not required for dry-run")
     return "\n".join(lines)
+
+
+def _prompt_state(config: ExperimentConfig) -> str:
+    from evcarry.harness import prompt_freeze
+
+    found = prompt_freeze.status(config.prompts)
+    required = ", frozen set required" if config.require_frozen_prompts else ""
+    return f"({found.state}, manifest {found.manifest_sha256[:12]}{required})"
 
 
 def _gym_images(config: ExperimentConfig):
@@ -345,6 +368,7 @@ async def _run_one(
     script: dict[str, Any] | None,
     model_config: Any,
     price: Any,
+    prompt_status: dict[str, object] | None = None,
 ) -> float:
     _install_trace_processors()
     spec = arm_spec(arm_name)
@@ -380,6 +404,9 @@ async def _run_one(
                 "config_sha256": config.source_sha256,
                 "git_commit": git_commit(),
                 "prompt_sha256": _sha256_file(prompt_file),
+                # Every model-visible text of the prompt set (evcarry.harness.prompt_freeze) and its freeze state.
+                "prompt_manifest_sha256": (prompt_status or {}).get("manifest_sha256"),
+                "prompts_frozen": (prompt_status or {}).get("state"),
                 "task_list_sha256": _sha256_file(resolve_repo_path(config.tasks)),
                 "task_prompt_sha256": task.agent_prompt_sha256,
                 "served_model": served_model,
@@ -493,6 +520,8 @@ async def run_experiment(
         raise KeyError(f"unknown model {config.model}")
     model_config = models[config.model]
     check_frozen_inputs(config)
+    billable = model_config.billable or (config.judge_model in models and models[config.judge_model].billable)
+    prompt_status = check_prompt_freeze(config, billable=billable)
     resolve_api_key(model_config)
     if config.judge_model in models:
         resolve_api_key(models[config.judge_model])
@@ -507,7 +536,6 @@ async def run_experiment(
         price=price,
         spent_usd=logged_spend(destination),
     )
-    billable = model_config.billable or (config.judge_model in models and models[config.judge_model].billable)
     written: list[Path] = []
     pending = []
     for task_name, arm_name, seed in grid(config):
@@ -527,6 +555,7 @@ async def run_experiment(
             script=script,
             model_config=model_config,
             price=price,
+            prompt_status=prompt_status,
         )
         guard.add(cost)
 

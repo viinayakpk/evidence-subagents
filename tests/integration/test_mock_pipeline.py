@@ -193,8 +193,12 @@ def test_cli_dry_run_and_exit_codes(capsys, monkeypatch) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "placeholder-not-a-key")
     monkeypatch.setenv("EVCARRY_DOCKER", "/nonexistent/docker")
     with pytest.raises(SystemExit) as docker:
-        main(["run", "configs/experiments/headline_deepseek.yaml"])
+        main(["run", "configs/experiments/pilot_deepseek.yaml"])
     assert docker.value.code == 5
+    # The headline needs a frozen prompt set; gym_v1 is frozen only after the pilot.
+    with pytest.raises(SystemExit) as unfrozen:
+        main(["run", "configs/experiments/headline_deepseek.yaml"])
+    assert unfrozen.value.code == 6
     main(["check", "configs/experiments/openrouter_debug.yaml"])
     checked = capsys.readouterr().out
     assert "openrouter_pinned" in checked or "openrouter" in checked

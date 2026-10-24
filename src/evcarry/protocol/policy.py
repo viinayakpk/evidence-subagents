@@ -62,7 +62,9 @@ def feedback_message(decision: PolicyDecision) -> str:
 
 def fallback_message(subagent_id: str, decision: PolicyDecision) -> str:
     detail = "; ".join(decision.reasons) or "checks failed"
+    # The main agent has no workspace tools in any delegating arm, so it re-plans and delegates again
+    # (prompts/gym_v1/evidence_system.md says the same); it cannot do the sub-task itself.
     return (
         f"FALLBACK: sub-agent {subagent_id} failed after one re-delegation ({detail}). "
-        "Do this sub-task yourself."
+        "Plan this step again and delegate it with a more specific instruction."
     )

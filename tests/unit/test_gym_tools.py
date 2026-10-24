@@ -182,10 +182,10 @@ def test_gym_prompts_name_the_fixed_workspace() -> None:
         text = prompt_text("prompts/gym_v1", name)
         assert WORKSPACE in text
     assert "claim_done" in prompt_text("prompts/gym_v1", "sa")
-    assert '"call_id"' in subagent_instructions("prompts/gym_v1", "researcher", schema=True)
-    assert "plain-text report" in subagent_instructions("prompts/gym_v1", "operator", schema=False)
+    assert '"call_id"' in subagent_instructions("prompts/gym_v1", "researcher", "evidence_risk")
+    assert "plain-text report" in subagent_instructions("prompts/gym_v1", "operator", "vanilla_mad")
     # The fixture prompt set has no return-format files, so its sub-agent prompts are unchanged.
-    assert subagent_instructions("prompts/v1", "researcher", schema=True) == prompt_text("prompts/v1", "researcher")
+    assert subagent_instructions("prompts/v1", "researcher", "evidence_risk") == prompt_text("prompts/v1", "researcher")
 
 
 def test_schema_normalization_matches_the_gym_agent() -> None:
