@@ -1,5 +1,6 @@
 import os
 import re
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -98,18 +99,23 @@ def test_openrouter_identity_and_models_yaml() -> None:
 def test_no_real_keys_in_repo(monkeypatch) -> None:
     root = Path(__file__).resolve().parents[2]
     banned = []
-    skip = {".venv", ".git", "third_party", "runs", "__pycache__"}
-    for path in root.rglob("*"):
-        if any(part in skip for part in path.parts):
-            continue
-        if not path.is_file():
+    # Every file git would commit: tracked, plus untracked files that .gitignore does not
+    # exclude. The ignored .env is where keys belong and is not scanned.
+    listed = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=root, capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    for name in listed:
+        path = root / name
+        if name.startswith("third_party/") or not path.is_file():
             continue
         if path.suffix.lower() in {".png", ".parquet", ".pyc"}:
             continue
         if path.stat().st_size > 1_000_000:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        if re.search(r"sk-[A-Za-z0-9]{20,}", text):
+        # DeepSeek/OpenAI keys are sk-<alnum>; OpenRouter keys are sk-or-v1-<hex>.
+        if re.search(r"sk-(?:or-v1-)?[A-Za-z0-9]{20,}", text):
             banned.append(str(path.relative_to(root)))
     assert banned == []
     example = (root / ".env.example").read_text(encoding="utf-8")
