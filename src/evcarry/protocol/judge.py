@@ -22,6 +22,7 @@ import hashlib
 import json
 import re
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -40,6 +41,10 @@ from evcarry.trace.writer import JsonlWriter, current_writer
 _HYPHENATED = re.compile(r"[A-Za-z]+-[A-Za-z0-9]+")
 
 JUDGE_PROMPT = "prompts/v1/judge.md"
+
+# Which return a judge call belongs to (arm, return_index, sub-agent, injected fault), set by the
+# sub-agent return boundary around its audit. Only the trace reads it; the judge never sees it.
+current_audit: ContextVar[dict[str, Any] | None] = ContextVar("evcarry_current_audit", default=None)
 VerdictLabel = Literal["supported", "contradicted", "incomplete", "unverifiable"]
 
 
@@ -271,11 +276,16 @@ class LlmJudge:
                 {
                     "type": "judge_call",
                     "claim_id": claim.claim_id,
+                    **(current_audit.get() or {}),
                     "judge_model": self.model_name,
                     **(record.provenance() if record is not None else {"served_model": None}),
                     "prompt_sha256": self.prompt_sha256,
                     "request_sha256": detail["request_sha256"],
                     "request_chars": len(request),
+                    # What the judge saw, so the verdict can be hand-labelled or re-judged later
+                    # (scripts/judge_validation.py).
+                    "claim": claim.model_dump(mode="json"),
+                    "request": request,
                     "raw_reply": (raw or "")[:4000],
                     "verdict": verdict.verdict,
                     "supports": verdict.supports,

@@ -23,7 +23,7 @@ from evcarry.harness.run_settings import harness_run_config
 from evcarry.inject.corruptions import CorruptionError
 from evcarry.inject.injector import FaultInjector
 from evcarry.protocol.audit import audit_return
-from evcarry.protocol.judge import LexicalJudge
+from evcarry.protocol.judge import LexicalJudge, current_audit
 from evcarry.protocol.policy import decide, fallback_message, feedback_message
 from evcarry.protocol.schema import FailedReturn, SubagentReturn, parse_subagent_return
 from evcarry.trace.writer import JsonlWriter
@@ -99,6 +99,7 @@ def make_extractor(
         index = state.return_index
         state.return_index += 1
         decision_inject = None
+        injected: dict[str, object] | None = None
         if injector is not None:
             decision_inject = injector.decide(
                 task=task,
@@ -118,19 +119,27 @@ def make_extractor(
                     )
                 else:
                     writer.write({"type": "injection", "arm": arm, **decision_inject.as_dict(), "applied": True})
-        report = await audit_return(
-            payload,
-            ledger=ledger,
-            caller=caller,
-            checks=checks,
-            sampler=sampler,
-            rate=rate,
-            # One random-audit draw per return. The bare run seed gave every return the
-            # same draw; the "audit|" prefix keeps it apart from the injector's stream.
-            seed=f"audit|{task}|{seed}|{index}",
-            judge=judge or LexicalJudge(),
-            require_evidence=require_evidence,
+                    injected = {"claim_id": decision_inject.claim_id, "kind": decision_inject.kind, "variant": decision_inject.variant}
+        # Labels this return's judge_call events in the trace; nothing here reaches the judge.
+        audit_token = current_audit.set(
+            {"arm": arm, "return_index": index, "subagent_id": payload.subagent_id, "injected": injected}
         )
+        try:
+            report = await audit_return(
+                payload,
+                ledger=ledger,
+                caller=caller,
+                checks=checks,
+                sampler=sampler,
+                rate=rate,
+                # One random-audit draw per return. The bare run seed gave every return the
+                # same draw; the "audit|" prefix keeps it apart from the injector's stream.
+                seed=f"audit|{task}|{seed}|{index}",
+                judge=judge or LexicalJudge(),
+                require_evidence=require_evidence,
+            )
+        finally:
+            current_audit.reset(audit_token)
         writer.write(
             {
                 "type": "subagent_return",
