@@ -41,6 +41,7 @@ from evcarry.ledger.ledger import Ledger
 from evcarry.ledger.store import write_ledger
 from evcarry.paths import repo_root, resolve_repo_path
 from evcarry.protocol.judge import build_judge
+from evcarry.providers.pin import PinGuard, current_pin_guard
 from evcarry.providers.registry import load_models, resolve_api_key
 from evcarry.runs.budget import BudgetError, BudgetGuard
 from evcarry.runs.config import ExperimentConfig
@@ -113,22 +114,42 @@ def load_script_file(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+_SPEND_EVENTS = ("llm_call", "judge_call", "llm_error")
+
+
+def event_spend(event: dict[str, Any]) -> float:
+    """Dollars one trace event spent, for the cap: the larger of the price-table cost and the provider's bill.
+
+    ``llm_error`` counts too: a call that was answered and then failed in the SDK
+    was billed. The larger figure keeps a price change or an unexpected endpoint
+    tier from letting the cap under-count.
+    """
+    if event.get("type") not in _SPEND_EVENTS:
+        return 0.0
+    table = float(event.get("cost_usd") or 0)
+    reported = event.get("provider_reported_cost_usd")
+    return max(table, float(reported)) if isinstance(reported, (int, float)) else table
+
+
+def trace_spend(path: Path) -> float:
+    total = 0.0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # a line cut short when the process was killed
+        if isinstance(event, dict):
+            total += event_spend(event)
+    return total
+
+
 def logged_spend(out_dir: Path) -> float:
-    """Dollars already logged in ``out_dir``: every ``llm_call`` and ``judge_call``, finished or aborted runs.
+    """Dollars already logged in ``out_dir`` (``event_spend`` over every trace, finished or aborted).
 
     The spend cap starts from this, so a restart (the plan runs one seed per
     weekend) does not reset what was already spent.
     """
-    total = 0.0
-    for path in [*out_dir.glob("*.jsonl"), *out_dir.glob("*.jsonl.aborted-*")]:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue  # a line cut short when the process was killed
-            if isinstance(event, dict) and event.get("type") in ("llm_call", "judge_call"):
-                total += float(event.get("cost_usd") or 0)
-    return total
+    return sum(trace_spend(path) for path in [*out_dir.glob("*.jsonl"), *out_dir.glob("*.jsonl.aborted-*")])
 
 
 def _set_aside(path: Path) -> Path:
@@ -341,6 +362,8 @@ async def _run_one(
         _set_aside(path)
     writer = JsonlWriter(path)
     token = current_writer.set(writer)
+    pin_guard = PinGuard()
+    pin_token = current_pin_guard.set(pin_guard)
     try:
         prompt_file = prompt_path(config.prompts, arm_name)
         routing = model_config.routing
@@ -400,18 +423,24 @@ async def _run_one(
         outcome = await runner(
             task=task, out_dir=out_dir, stem=stem, build=build, writer=writer, price=price, config=config
         )
+        # A sub-agent tool or the judge may have caught the mismatch; the run still fails, without run_end.
+        pin_guard.raise_if_violated()
         events = read_events(path)
         input_tokens = 0
         output_tokens = 0
         cost = 0.0
+        reported = 0.0
         for event in events:
-            if event.get("type") != "llm_call":
+            if event.get("type") in _SPEND_EVENTS and isinstance(event.get("provider_reported_cost_usd"), (int, float)):
+                reported += float(event["provider_reported_cost_usd"])
+            if event.get("type") not in ("llm_call", "llm_error"):
                 continue
             tokens = event.get("tokens") or {}
             input_tokens += int(tokens.get("input_tokens") or 0)
             output_tokens += int(tokens.get("output_tokens") or 0)
             cost += float(event.get("cost_usd") or 0)
         judge_cost = float(getattr(judge, "cost_usd", 0.0))
+        spend = sum(event_spend(event) for event in events)
         writer.write(
             {
                 "type": "run_end",
@@ -426,11 +455,15 @@ async def _run_one(
                 "cost_usd": cost,
                 "judge_calls": int(getattr(judge, "calls", 0)),
                 "judge_cost_usd": judge_cost,
+                # What the cap counts for this run (event_spend), and the provider's own bill.
+                "spend_usd": spend,
+                "provider_reported_cost_usd": reported,
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
         )
-        return cost + judge_cost
+        return spend
     finally:
+        current_pin_guard.reset(pin_token)
         current_writer.reset(token)
         writer.close()
 

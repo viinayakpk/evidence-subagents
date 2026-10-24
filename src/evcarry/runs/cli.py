@@ -11,6 +11,7 @@ import pandas as pd
 
 from evcarry.env.isolation import EnvironmentUnavailable
 from evcarry.harness.arms import ARMS
+from evcarry.providers.pin import ProviderMismatch
 from evcarry.providers.registry import MissingApiKey, load_models
 from evcarry.runs.budget import PeakWindowError, SpendCapExceeded
 from evcarry.runs.config import load_experiment
@@ -158,3 +159,6 @@ def main(argv: list[str] | None = None) -> None:
     except FrozenInputMismatch as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(6) from exc
+    except ProviderMismatch as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(7) from exc

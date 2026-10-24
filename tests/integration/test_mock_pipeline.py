@@ -264,3 +264,36 @@ async def test_budget_refusal_lets_running_runs_finish(tmp_path: Path, monkeypat
     files = list(tmp_path.glob("*.jsonl"))
     assert len(files) == 2
     assert all(read_events(path)[-1]["type"] == "run_end" for path in files)
+
+
+async def test_a_swallowed_provider_mismatch_still_fails_the_run(tmp_path: Path, monkeypatch) -> None:
+    """A sub-agent tool or the judge can catch ProviderMismatch; the run must still fail, without run_end."""
+    from evcarry.providers.pin import ProviderMismatch, current_pin_guard
+    from evcarry.runs import manager
+
+    async def off_pin_run(**_kwargs):
+        current_pin_guard.get().violate("served by Novita, pinned to ['deepinfra/fp8']")
+        return {"agent_status": "completed", "passed": True, "status": "ok"}
+
+    monkeypatch.setattr(manager, "_run_fixture", off_pin_run)
+    config = load_experiment("configs/experiments/mock_e2e.yaml")
+    config.arms = ["sa"]
+    config.tasks = "tests/fixtures/tasks/one_sections.txt"
+    with pytest.raises(ProviderMismatch, match="Novita"):
+        await run_experiment(config, out_dir=tmp_path)
+    (trace,) = tmp_path.glob("*.jsonl")
+    assert [event["type"] for event in read_events(trace)] == ["run_start"]
+    assert current_pin_guard.get() is None  # the guard does not leak into the next run
+
+
+def test_cli_exit_code_for_a_provider_mismatch(monkeypatch, capsys) -> None:
+    from evcarry.providers.pin import ProviderMismatch
+    from evcarry.runs import cli
+
+    async def refuse(_config):
+        raise ProviderMismatch("served by Novita")
+
+    monkeypatch.setattr(cli, "run_experiment", refuse)
+    with pytest.raises(SystemExit) as stopped:
+        main(["run", "configs/experiments/mock_e2e.yaml"])
+    assert stopped.value.code == 7 and "Novita" in capsys.readouterr().err

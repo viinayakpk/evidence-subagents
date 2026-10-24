@@ -134,4 +134,5 @@ def build_model(
         kind=config.kind,
         routing=config.routing,
         extra_headers=headers,
+        price=config.price_table(),
     )

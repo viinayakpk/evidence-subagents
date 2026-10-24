@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import time
 from collections import deque
+from datetime import datetime, timezone
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,7 +26,8 @@ from openai import AsyncOpenAI
 from openai.types.responses.response_prompt_param import ResponsePromptParam
 
 from evcarry.providers.identity import ServedIdentity, served_identity
-from evcarry.providers.usage import TokenUsage, token_usage_from_body
+from evcarry.providers.pin import PinCheck, ProviderMismatch, check_pin, current_pin_guard
+from evcarry.providers.usage import PriceTable, TokenUsage, cost_usd, token_usage_from_body
 from evcarry.trace.writer import current_writer
 
 # One bucket per in-flight get_response, so concurrent calls do not share attempts.
@@ -54,19 +56,31 @@ class LlmCallRecord:
     attempts: int
     latency_ms: float
     system_instructions: str | None = None
+    pin: PinCheck | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
             "configured_model": self.configured_model,
             "kind": self.kind,
-            "served_model": self.identity.served_model,
-            "served_provider": self.identity.served_provider,
-            "provider_unobserved": self.identity.provider_unobserved,
-            "router": self.identity.router,
+            **self.identity.as_dict(),
             "routing": self.routing,
             "attempts": self.attempts,
             "latency_ms": self.latency_ms,
             "usage": self.usage.as_dict(),
+            "provider_check": self.pin.as_dict() if self.pin is not None else None,
+        }
+
+    def provenance(self) -> dict[str, object]:
+        """Who served the call: the fields ``llm_call``, ``llm_error`` and ``judge_call`` events share."""
+        return {
+            "served_model": self.identity.served_model,
+            "served_provider": self.identity.served_provider,
+            "response_provider": self.identity.response_provider,
+            "provider_unobserved": self.identity.provider_unobserved,
+            "generation_id": self.identity.generation_id,
+            "service_tier": self.identity.service_tier,
+            "quantization": self.identity.quantization,
+            "provider_check": self.pin.as_dict() if self.pin is not None else None,
         }
 
 
@@ -146,9 +160,12 @@ class RecordingModel(OpenAIChatCompletionsModel):
         kind: str,
         routing: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
+        price: PriceTable | None = None,
     ) -> None:
         super().__init__(model=model, openai_client=openai_client)
         self.kind = kind
+        # Prices a call that was answered (and billed) but then failed in the SDK.
+        self.price = price
         self.configured_model = model if isinstance(model, str) else str(model)
         self.routing = dict(routing) if routing else None
         self.extra_headers = dict(extra_headers or {})
@@ -192,6 +209,7 @@ class RecordingModel(OpenAIChatCompletionsModel):
             attempts=len(bucket),
             latency_ms=(time.perf_counter() - started) * 1000,
             system_instructions=system_instructions,
+            pin=check_pin(identity, self.routing) if successes else None,
         )
         self.history.append(record)
         return record
@@ -206,6 +224,8 @@ class RecordingModel(OpenAIChatCompletionsModel):
         if writer is None:
             return
         answered = any(200 <= int(item.get("status", 0)) < 300 for item in bucket)
+        # An answered call was billed: its cost counts toward the spend cap like an llm_call's.
+        cost = cost_usd(record.usage, self.price, datetime.now(timezone.utc)) if answered and self.price else 0.0
         writer.write(
             {
                 "type": "llm_error",
@@ -215,8 +235,10 @@ class RecordingModel(OpenAIChatCompletionsModel):
                 "error": str(error)[:1000],
                 "attempts": record.attempts,
                 "statuses": [item.get("status") for item in bucket],
-                "served_model": record.identity.served_model if answered else None,
+                **(record.provenance() if answered else {"served_model": None}),
                 "tokens": record.usage.as_dict() if answered else None,
+                "cost_usd": cost,
+                "provider_reported_cost_usd": record.usage.provider_reported_cost_usd if answered else None,
                 "latency_ms": record.latency_ms,
             }
         )
@@ -234,6 +256,9 @@ class RecordingModel(OpenAIChatCompletionsModel):
         conversation_id: str | None = None,
         prompt: ResponsePromptParam | None = None,
     ) -> Any:
+        guard = current_pin_guard.get()
+        if guard is not None:
+            guard.raise_if_violated()  # no further paid calls once the run broke its pin
         bucket: list[dict[str, Any]] = []
         token = _HTTP_BODIES.set(bucket)
         started = time.perf_counter()
@@ -254,12 +279,31 @@ class RecordingModel(OpenAIChatCompletionsModel):
             # Not queued for take_record: on_llm_end does not run for a failed call, so a
             # queued record would be paired with the next successful call and that
             # call's tokens and served model would be logged as this one's (zero, requested id).
-            self._trace_failure(self._record(bucket, started, system_instructions), bucket, error)
+            failed = self._record(bucket, started, system_instructions)
+            if failed.pin is not None and failed.pin.ok is False:
+                self._refuse(failed, bucket)  # answered off-pin, then failed in the SDK
+            self._trace_failure(failed, bucket, error)
             raise
         finally:
             _HTTP_BODIES.reset(token)
-        self._pending.append(self._record(bucket, started, system_instructions))
+        record = self._record(bucket, started, system_instructions)
+        if record.pin is not None and record.pin.ok is False:
+            self._refuse(record, bucket)
+        self._pending.append(record)
         return response
+
+    def _refuse(self, record: LlmCallRecord, bucket: list[dict[str, Any]]) -> None:
+        """Log the off-pin call (it was billed) and stop the run: this reply is never used."""
+        reason = record.pin.reason if record.pin is not None else "provider pin broken"
+        error = ProviderMismatch(f"{self.configured_model}: {reason}")
+        writer = current_writer.get()
+        if writer is not None:
+            writer.write({"type": "provider_mismatch", "configured_model": self.configured_model, **record.provenance()})
+        self._trace_failure(record, bucket, error)
+        guard = current_pin_guard.get()
+        if guard is not None:
+            guard.violate(reason)
+        raise error
 
     def stream_response(
         self,

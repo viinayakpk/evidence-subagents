@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from evcarry.paths import resolve_repo_path
 from evcarry.protocol.checks import is_numeric_value, value_in_text
 from evcarry.protocol.schema import Claim
+from evcarry.providers.pin import ProviderMismatch
 from evcarry.providers.usage import PriceTable, cost_usd
 from evcarry.trace.writer import JsonlWriter, current_writer
 
@@ -225,6 +226,8 @@ class LlmJudge:
             )
             raw = _response_text(response)
             parsed = parse_judge_output(raw)
+        except ProviderMismatch:
+            raise  # an off-pin judge call stops the run; it must not fall back silently
         except (ValidationError, ValueError) as exc:
             error = f"unparseable judge reply: {exc}"[:500]
         except Exception as exc:  # noqa: BLE001 - provider errors fall back to the lexical judge
@@ -269,7 +272,7 @@ class LlmJudge:
                     "type": "judge_call",
                     "claim_id": claim.claim_id,
                     "judge_model": self.model_name,
-                    "served_model": detail["served_model"],
+                    **(record.provenance() if record is not None else {"served_model": None}),
                     "prompt_sha256": self.prompt_sha256,
                     "request_sha256": detail["request_sha256"],
                     "request_chars": len(request),
@@ -282,6 +285,7 @@ class LlmJudge:
                     "error": error,
                     "tokens": tokens,
                     "cost_usd": cost,
+                    "provider_reported_cost_usd": record.usage.provider_reported_cost_usd if record is not None else None,
                     "latency_ms": detail["latency_ms"],
                 }
             )
