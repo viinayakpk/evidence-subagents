@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -42,6 +43,16 @@ from evcarry.env.isolation import EnvironmentUnavailable
 from evcarry.env.toolathlon import TaskSpec
 from evcarry.harness.tools import ToolMeta
 from evcarry.paths import repo_root
+
+class _SkipBannerLines(logging.Filter):
+    """Several gym servers print a start-up banner on stdout. The MCP client skips the line
+    but logs a full traceback for it; drop just that record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.getMessage() != "Failed to parse JSONRPC message from server"
+
+
+logging.getLogger("mcp.client.stdio").addFilter(_SkipBannerLines())
 
 LABEL_KEY = "evcarry.project"
 LABEL_VALUE = "evidence-subagents"
@@ -185,7 +196,12 @@ class CommandResult:
         }
 
 
-async def _run(argv: list[str], *, timeout: float, stdin: str | None = None) -> CommandResult:
+async def _run(argv: list[str], *, timeout: float, stdin: str | None = None, settle: bool = False) -> CommandResult:
+    """Run a command. ``settle``: if cancelled, let it finish before re-raising.
+
+    Killing a ``docker run`` / ``network create`` client does not stop the daemon
+    from creating the object, so creates settle and teardown then sees what they made.
+    """
     started = time.perf_counter()
     process = await asyncio.create_subprocess_exec(
         *argv,
@@ -197,6 +213,13 @@ async def _run(argv: list[str], *, timeout: float, stdin: str | None = None) -> 
         out, err = await asyncio.wait_for(
             process.communicate(stdin.encode("utf-8") if stdin is not None else None), timeout
         )
+    except asyncio.CancelledError:
+        if settle:
+            with suppress(BaseException):
+                await asyncio.wait_for(asyncio.shield(process.wait()), 60)
+        with suppress(ProcessLookupError):
+            process.kill()
+        raise
     except TimeoutError:
         with suppress(ProcessLookupError):
             process.kill()
@@ -341,7 +364,6 @@ class GymTaskEnv:
         self.routes: dict[str, tuple[str, str]] = {}
         self.catalog: dict[str, ToolMeta] = {}
         self.claimed_done = False
-        self._started: list[str] = []
 
     # -- lifecycle -----------------------------------------------------------------
 
@@ -357,7 +379,8 @@ class GymTaskEnv:
         await self.down()
 
     async def _docker(self, *args: str, timeout: float = 120.0, stdin: str | None = None, check: bool = True) -> CommandResult:
-        result = await _run([self.docker, *args], timeout=timeout, stdin=stdin)
+        settle = args[0] in ("run", "network")
+        result = await _run([self.docker, *args], timeout=timeout, stdin=stdin, settle=settle)
         if check and result.returncode != 0:
             raise RuntimeError(f"docker {' '.join(args[:3])} failed ({result.returncode}): {result.stderr.strip()[:500]}")
         return result
@@ -370,15 +393,12 @@ class GymTaskEnv:
         started = time.perf_counter()
         info = self.info
         await self._docker("network", "create", *self._labels(), info.network)
-        self._started.append("network")
         await self._docker("run", "-d", "--name", info.postgres, "--network", info.network, *self._labels(), self.images.postgres)
-        self._started.append("postgres")
         env_args = [item for key, value in self.container_env.items() for item in ("-e", f"{key}={value}")]
         await self._docker(
             "run", "-d", "--name", info.agent, "--network", info.network, *self._labels(),
             *env_args, "-w", GYM_HOME, self.images.agent, "sleep", "infinity",
         )
-        self._started.append("agent")
         for name, image in (("agent", self.images.agent), ("postgres", self.images.postgres)):
             inspected = await self._docker("image", "inspect", "--format", "{{.Id}}", image, check=False)
             info.image_ids[name] = inspected.stdout.strip()
@@ -416,15 +436,24 @@ class GymTaskEnv:
         return f"tasks.finalpool.{self.task.name}.{part}.main"
 
     async def _preprocess(self) -> dict[str, Any] | None:
+        """Run the task's preprocess. A failure is an environment error: the task state is unknown.
+
+        (The gym's own runner logs the failure and carries on.)
+        """
         if not (self.task.root / "preprocess" / "main.py").is_file():
             return None
         launch = " ".join(self.info.launch_time.split()[:2])  # the gym drops the weekday here
+        limit = int(self.setup_timeout)
         result = await self._docker(
-            "exec", "-w", GYM_HOME, self.info.agent, PYTHON_BIN, "-m", self._module("preprocess"),
+            "exec", "-w", GYM_HOME, self.info.agent, *_kill_after(limit), PYTHON_BIN, "-m", self._module("preprocess"),
             "--agent_workspace", WORKSPACE, "--launch_time", launch,
-            timeout=self.setup_timeout, check=False,
+            timeout=limit + 30, check=False,
         )
         (self.log_dir / "preprocess.log").write_text(result.stdout + "\n--- stderr\n" + result.stderr, encoding="utf-8")
+        if result.returncode != 0 or result.timed_out:
+            raise EnvironmentUnavailable(
+                f"preprocess for {self.task.name} failed (exit {result.returncode}): {result.stderr.strip()[-300:]}"
+            )
         return result.as_dict(limit=2000)
 
     async def _connect_servers(self) -> None:
@@ -460,19 +489,16 @@ class GymTaskEnv:
         self.catalog[PYTHON_EXECUTE] = PYTHON_EXECUTE_META
 
     async def down(self) -> None:
+        """Close the MCP sessions, then remove everything labelled with this run's id.
+
+        Removal runs in a worker thread (it does not stall parallel runs) and is
+        shielded: if this task is cancelled again, the removal still completes.
+        """
         mark = time.perf_counter()
         for session in self.sessions.values():
             await session.close()
         self.sessions.clear()
-        # Synchronous so teardown still happens while the event loop is being cancelled.
-        if "agent" in self._started or "postgres" in self._started:
-            subprocess.run(
-                [self.docker, "rm", "-fv", self.info.agent, self.info.postgres],
-                capture_output=True, check=False, timeout=120,
-            )
-        if "network" in self._started:
-            subprocess.run([self.docker, "network", "rm", self.info.network], capture_output=True, check=False, timeout=60)
-        self._started.clear()
+        await asyncio.shield(asyncio.to_thread(remove_run_resources, self.info.run_id, self.docker))
         self.info.timings["teardown_s"] = time.perf_counter() - mark
 
     # -- tools ------------------------------------------------------------------------
@@ -498,7 +524,10 @@ class GymTaskEnv:
     async def python_execute(self, arguments: dict[str, Any]) -> str:
         """Same contract and output format as the gym's python_execute local tool."""
         code = str(arguments.get("code", ""))
-        timeout = min(int(arguments.get("timeout") or 30), 120)
+        try:
+            timeout = min(max(int(arguments.get("timeout") or 30), 1), 120)
+        except (TypeError, ValueError):
+            timeout = 30
         filename = str(arguments.get("filename") or f"{uuid.uuid4()}.py")
         filename = os.path.basename(filename)
         if not filename.endswith(".py"):
@@ -509,10 +538,11 @@ class GymTaskEnv:
             stdin=code, timeout=60,
         )
         result = await self._docker(
-            "exec", "-w", WORKSPACE, self.info.agent, "uv", "run", "--directory", WORKSPACE, f"./.python_tmp/{filename}",
+            "exec", "-w", WORKSPACE, self.info.agent, *_kill_after(timeout),
+            "uv", "run", "--directory", WORKSPACE, f"./.python_tmp/{filename}",
             timeout=timeout + 15, check=False,
         )
-        if result.timed_out:
+        if result.timed_out or result.returncode == _KILLED:
             return f"=== TIMEOUT ===\nExceeded {timeout}s limit."
         parts: list[str] = []
         if result.stdout:
@@ -539,14 +569,16 @@ class GymTaskEnv:
             return {"status": "no_eval_script", "passed": None, "eval_ran": False}
         result_file = f"{RUN_DIR}/eval_result.json"
         mark = time.perf_counter()
+        limit = int(self.eval_timeout)
         result = await self._docker(
-            "exec", "-w", GYM_HOME, self.info.agent, PYTHON_BIN, "-m", self._module("evaluation"),
+            "exec", "-w", GYM_HOME, self.info.agent, *_kill_after(limit), PYTHON_BIN, "-m", self._module("evaluation"),
             "--res_log_file", result_file,
             "--agent_workspace", WORKSPACE,
             "--groundtruth_workspace", f"tasks/finalpool/{self.task.name}/groundtruth_workspace",
             "--launch_time", self.info.launch_time,
-            timeout=self.eval_timeout, check=False,
+            timeout=limit + 30, check=False,
         )
+        result.timed_out = result.timed_out or result.returncode == _KILLED
         self.info.timings["eval_s"] = time.perf_counter() - mark
         (self.log_dir / "evaluation.log").write_text(result.stdout + "\n--- stderr\n" + result.stderr, encoding="utf-8")
         written = await self._docker("exec", self.info.agent, "cat", result_file, check=False, timeout=30)
@@ -570,6 +602,33 @@ class GymTaskEnv:
         dest.mkdir(parents=True, exist_ok=True)
         for source, name in ((WORKSPACE, "workspace"), (RUN_DIR, "run")):
             await self._docker("cp", f"{self.info.agent}:{source}/.", str(dest / name), check=False, timeout=300)
+
+
+_KILLED = 137  # exit status of a command that `timeout -s KILL` stopped
+
+
+def _kill_after(seconds: int) -> list[str]:
+    """Prefix that kills the command inside the container at ``seconds``.
+
+    Killing the host's ``docker exec`` client would leave the process running in the container.
+    """
+    return ["timeout", "-s", "KILL", str(max(1, seconds))]
+
+
+def remove_run_resources(run_id: str, docker: str) -> None:
+    """Remove the containers (with their anonymous volumes) and the network of one run."""
+    selector = f"label=evcarry.run={run_id}"
+    listed = subprocess.run(
+        [docker, "ps", "-a", "--filter", selector, "--format", "{{.Names}}"], capture_output=True, text=True, check=False
+    )
+    containers = listed.stdout.split()
+    if containers:
+        subprocess.run([docker, "rm", "-fv", *containers], capture_output=True, check=False, timeout=180)
+    networks = subprocess.run(
+        [docker, "network", "ls", "--filter", selector, "--format", "{{.Name}}"], capture_output=True, text=True, check=False
+    ).stdout.split()
+    for network in networks:
+        subprocess.run([docker, "network", "rm", network], capture_output=True, check=False, timeout=60)
 
 
 def leftover_resources(docker: str | None = None) -> dict[str, list[str]]:

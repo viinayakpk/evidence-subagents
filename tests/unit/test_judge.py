@@ -149,3 +149,28 @@ def test_scripted_judge_catches_omissions_on_the_synthetic_set() -> None:
     for key, level in lexical.items():
         if key[0] != "omission":
             assert judged[key] == level, key
+
+
+def test_judge_reads_the_answer_not_the_reasoning() -> None:
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText, ResponseReasoningItem
+    from openai.types.responses.response_reasoning_item import Content
+
+    from evcarry.protocol.judge import _response_text
+
+    reasoning = ResponseReasoningItem(
+        id="r", type="reasoning", summary=[],
+        content=[Content(type="reasoning_text", text='Draft: {"verdict": "supported", "reason": "maybe"}')],
+    )
+    answer = ResponseOutputMessage(
+        id="m", type="message", role="assistant", status="completed",
+        content=[ResponseOutputText(type="output_text", annotations=[],
+                                    text='{"verdict": "incomplete", "missing": ["E"], "reason": "E is left out."}')],
+    )
+    text = _response_text(type("Response", (), {"output": [reasoning, answer]})())
+    assert "Draft" not in text
+    assert parse_judge_output(text).verdict == "incomplete"
+    last = parse_judge_output('Example: {"verdict": "supported"} Answer: {"verdict": "contradicted", "reason": "14, not 11"}')
+    assert last.verdict == "contradicted"
+    tolerant = parse_judge_output('{"verdict": "incomplete", "missing": [5, "E"], "reason": null}')
+    assert tolerant.missing == ["5", "E"] and tolerant.reason == ""
+    assert parse_judge_output('{"verdict": "supported", "missing": null}').missing == []

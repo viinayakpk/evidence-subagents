@@ -33,6 +33,8 @@ class ReplayResult:
     replayed_tool: str | None = None
     write_replayed: bool = False
     unverifiable: list[str] | None = None
+    # Read-back text per write call id, for the L3 evidence. Not written to the trace.
+    readbacks: dict[str, str] | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -72,6 +74,7 @@ async def replay_claim(claim: Claim, ledger: Ledger, caller: ToolCaller) -> Repl
         return ReplayResult(claim.claim_id, True, "no tool-call pointer to replay")
     texts: list[str] = []
     unverifiable: list[str] = []
+    readbacks: dict[str, str] = {}
     for pointer in pointers:
         entry = ledger.get(pointer.call_id)
         if entry is None:
@@ -96,7 +99,9 @@ async def replay_claim(claim: Claim, ledger: Ledger, caller: ToolCaller) -> Repl
                 continue
             tool_name, arguments = readback
             result = await caller.call_tool(tool_name, arguments)
-            texts.append(render_tool_result(result))
+            text = render_tool_result(result)
+            texts.append(text)
+            readbacks[entry.call_id] = text
     if not texts:
         return ReplayResult(
             claim.claim_id,
@@ -113,8 +118,11 @@ async def replay_claim(claim: Claim, ledger: Ledger, caller: ToolCaller) -> Repl
             "claim value is not in the replayed or read-back text",
             write_replayed=False,
             unverifiable=unverifiable or None,
+            readbacks=readbacks,
         )
-    return ReplayResult(claim.claim_id, True, "replay matches", write_replayed=False, unverifiable=unverifiable or None)
+    return ReplayResult(
+        claim.claim_id, True, "replay matches", write_replayed=False, unverifiable=unverifiable or None, readbacks=readbacks
+    )
 
 
 def mask_volatile(text: str, patterns: list[str] | None) -> str:

@@ -204,3 +204,65 @@ def test_schema_normalization_matches_the_gym_agent() -> None:
     assert "enum" not in props["level"]
     assert props["rows"]["items"]["items"] == {"type": "string"}
     assert "additionalProperties" not in props["extra"]
+
+
+async def test_tool_errors_return_to_the_model_and_pages_are_not_cut_again() -> None:
+    from evcarry.harness.tools import OVERLONG_META, VIEW_OVERLONG, ToolMeta, Toolset, build_function_tool
+
+    class Ctx:
+        tool_call_id = "call_1"
+
+    class Raising:
+        async def call_tool(self, name, arguments):
+            raise ConnectionError("server gone")
+
+    meta = ToolMeta("s-read", "read", {"type": "object", "properties": {}}, True, strict=False)
+    ledger = Ledger()
+    toolset = Toolset(catalog={"s-read": meta, VIEW_OVERLONG: OVERLONG_META}, caller=Raising(), all_tools=(),
+                      researcher=(), operator=(), show_call_id=True, max_chars=10, ledger=ledger)
+    tool = build_function_tool("s-read", Raising(), toolset)
+    assert await tool.on_invoke_tool(Ctx(), "{}") == "Error calling s-read: ConnectionError: server gone"
+    assert (await tool.on_invoke_tool(Ctx(), "{not json")).startswith("Error calling s-read: JSONDecodeError")
+    assert ledger.entries == {}
+
+    ledger.record(call_id="big", tool_name="s-read", arguments={}, result_text="a" * 10 + "b" * 10 + "TAIL", read_only=True)
+    router = ToolRouter(None, {VIEW_OVERLONG: overlong_view(ledger, 10)})
+    view = build_function_tool(VIEW_OVERLONG, router, toolset)
+    page = await view.on_invoke_tool(Ctx(), '{"call_id": "big", "page": 2}')
+    assert page.endswith("TAIL") and "truncated" not in page
+    assert "integer" in await view.on_invoke_tool(Ctx(), '{"call_id": "big", "page": "next"}')
+
+
+async def test_judge_evidence_shows_the_call_and_reads_back_once() -> None:
+    from evcarry.protocol.audit import audit_return
+    from evcarry.protocol.judge import LexicalJudge
+    from evcarry.protocol.schema import SubagentReturn
+
+    ledger = Ledger()
+    ledger.record(call_id="py", tool_name="python_execute", arguments={"code": "print('Total orders: 718')"},
+                  result_text="=== STDOUT ===\nTotal orders: 718", read_only=False)
+    ledger.record(call_id="mail", tool_name="emails-send_email", arguments={"subject": "Report"},
+                  result_text="Email sent", read_only=False, readback_tool="emails-search_emails",
+                  readback_arguments={"query": "Report", "folder": "Sent"})
+    seen: list[str] = []
+
+    class Judge(LexicalJudge):
+        def judge(self, claim, evidence_text):
+            seen.append(evidence_text)
+            return super().judge(claim, evidence_text)
+
+    caller = _Caller({"emails-search_emails": "1. Subject: Report"})
+    claims = [
+        Claim(claim_id="a", text="There are 718 orders.", kind="fact", value=718,
+              evidence=[ToolCallEvidence(type="tool_call", call_id="py", span="Total orders: 718")]),
+        Claim(claim_id="b", text="Sent the report.", kind="action_done", value="Report",
+              evidence=[ToolCallEvidence(type="tool_call", call_id="mail", span="Email sent")]),
+    ]
+    report = await audit_return(SubagentReturn(subagent_id="operator", status="complete", claims=claims),
+                                ledger=ledger, caller=caller, checks=("L0", "L1", "L2", "L3"), sampler="risk",
+                                rate=1.0, seed=1, judge=Judge())
+    assert caller.calls == ["emails-search_emails"]
+    by_text = {text.split(":", 1)[0]: text for text in seen}
+    assert "print('Total orders: 718')" in next(t for t in seen if "python_execute" in t)
+    assert "--- read-back of mail now (emails-search_emails):\n1. Subject: Report" in next(t for t in seen if "send_email" in t)
+    assert by_text and not report.failures

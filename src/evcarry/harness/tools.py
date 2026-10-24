@@ -154,7 +154,10 @@ def overlong_view(ledger: Ledger, page_size: int) -> Callable[[dict[str, Any]], 
 
     async def view(arguments: dict[str, Any]) -> str:
         call_id = str(arguments.get("call_id", ""))
-        page = int(arguments.get("page", 0) or 0)
+        try:
+            page = int(arguments.get("page", 0) or 0)
+        except (TypeError, ValueError):
+            return f"page must be an integer, got {arguments.get('page')!r}"
         entry = ledger.get(call_id)
         if entry is None:
             return f"No recorded tool output with call_id '{call_id}'."
@@ -197,8 +200,13 @@ def build_function_tool(name: str, caller: Any, toolset: Toolset | None = None) 
     ledger = toolset.ledger if toolset is not None else None
 
     async def _invoke(ctx: Any, args_json: str) -> str:
-        arguments = json.loads(args_json) if args_json else {}
-        result = await caller.call_tool(name, arguments)
+        # A FunctionTool built directly has no failure handler: an exception here
+        # would end the whole run. Bad arguments and tool errors go back to the model.
+        try:
+            arguments = json.loads(args_json) if args_json else {}
+            result = await caller.call_tool(name, arguments)
+        except Exception as exc:  # noqa: BLE001
+            return f"Error calling {name}: {type(exc).__name__}: {exc}"
         text = render_tool_result(result)
         if ledger is None:
             return text
@@ -217,7 +225,9 @@ def build_function_tool(name: str, caller: Any, toolset: Toolset | None = None) 
         )
         if toolset is None:
             return text
-        return display_text(text, ledger_id, show_call_id=toolset.show_call_id, max_chars=toolset.max_chars)
+        # A page of an overlong output is already page-sized; cutting it again would hide its tail.
+        limit = None if name == VIEW_OVERLONG else toolset.max_chars
+        return display_text(text, ledger_id, show_call_id=toolset.show_call_id, max_chars=limit)
 
     return FunctionTool(
         name=meta.name,

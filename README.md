@@ -103,9 +103,11 @@ M6 hooks, not used yet: `serving/serve_primary.sh`, `serving/serve_fallback.sh`,
 3. Start each MCP server the task needs inside the agent container with the command, env and cwd from the gym YAML, and talk to it over `docker exec -i` stdio (MCP SDK client in `legacy` handshake mode; two gym servers crash on `server/discover`).
 4. Run the arm. Tools are named `{server}-{tool}`, with input schemas rewritten as the gym's agent rewrites them. Local tools are `claim_done` (ends the run, as in the gym), `python_execute` (the gym's contract, run in the container) and `view_overlong_output` (pages a result cut at `gym.tool_output_chars`, default 8000 like the gym).
 5. If the agent called `claim_done`, run the task's `evaluation` module in the container; exit code 0 is a pass. Without `claim_done` the gym does not grade, and `passed` is false.
-6. Copy the workspace to `runs/<exp>/workspaces/`, write the ledger to `runs/<exp>/ledgers/`, then `docker rm -fv` and `docker network rm`.
+6. Copy the workspace to `runs/<exp>/workspaces/`, write the ledger to `runs/<exp>/ledgers/`, then remove the run's containers (with their volumes) and network by label.
 
-Every container and network carries `evcarry.project=evidence-subagents`. `make gym-clean` removes leftovers after a crash; `make gym-check` is the preflight. `configs/gym_tools.yaml` says which gym tools are read-only (researcher allowlist, L2 replay), which reads are nondeterministic, which output fields are masked before replay (snowflake's per-call `data_id`), and which read shows each write.
+A task whose environment cannot start (a server, the preprocess, or a docker step fails) ends with `status: env_error` and `passed: null`; the other runs continue. Tool errors go back to the model as text. Preprocess, `python_execute` and evaluation are killed inside the container at their time limits.
+
+Every container and network carries `evcarry.project=evidence-subagents`. `make gym-clean` removes leftovers after a crash (and the containers of any experiment still running); `make gym-check` is the preflight. `configs/gym_tools.yaml` says which gym tools are read-only (researcher allowlist, L2 replay), which reads are nondeterministic, which output fields are masked before replay (snowflake's per-call `data_id`), and which read shows each write.
 
 The images (`scripts/build_gym_images.sh`): the gym's own Dockerfile unchanged, then `docker/gym/overlay.Dockerfile`, which builds MCP servers the upstream image leaves unbuilt (notion, canvas, fetch, woocommerce, playwright, google-sheets), connects the Postgres routers that woocommerce, canvas and notion ship but never construct (`docker/gym/wire_pg_routers.py`), and pre-builds the gym project's Python environment that `python_execute` uses. The submodule is not modified.
 
@@ -149,7 +151,7 @@ The system prompt is the frozen file under `prompts/v1/` and is the cache prefix
 10. Task-specific gym system prompts are not the frozen system prefix.
 11. The OpenRouter example price table is not a real rate card.
 12. Parallel paid runs can slightly overshoot the spend cap.
-13. L1 and L2 do not look for a `derived` claim's value in the cited output (a count or rate is computed, not quoted); its spans are still checked and L3 recomputes it.
+13. L1 and L2 do not look for a `derived` claim's value in the cited output (a count or rate is computed, not quoted); its spans are still checked. Only L3 checks the value, and only on sampled claims (see `docs/STATUS_gym_judge.md`).
 14. L2 reports `unverifiable` (not a failure) for a write with no read-back in `configs/gym_tools.yaml` and for reads marked nondeterministic there. L3 still runs on those claims.
 15. Gym runs use `prompts/gym_v1/` (the gym's workspace and `claim_done` instructions, a fixed workspace path so the system prompt is byte-identical across runs, and a return-format section per arm). Tool results carry a `[call_id: ...]` header so a real model can cite them.
 16. DeepSeek and the OpenRouter DeepSeek route have `json_schema_outputs: false`: typed and evidence sub-agents get the claim schema in the prompt and their text is parsed (one repair), because DeepSeek documents `json_object` but not `json_schema`.

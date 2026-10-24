@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +25,7 @@ from agents import RunConfig, Runner, set_trace_processors
 from agents.exceptions import MaxTurnsExceeded
 
 from evcarry.env.fake_mcp import FakeMcp
-from evcarry.env.isolation import DockerIsolation
+from evcarry.env.isolation import DockerIsolation, EnvironmentUnavailable
 from evcarry.env.toolathlon import TaskSpec, load_task, load_task_list, prepare_workspace
 from evcarry.eval.evaluate import evaluate_task
 from evcarry.harness.agents import build_main_agent
@@ -38,7 +39,7 @@ from evcarry.ledger.store import write_ledger
 from evcarry.paths import repo_root, resolve_repo_path
 from evcarry.protocol.judge import build_judge
 from evcarry.providers.registry import load_models, resolve_api_key
-from evcarry.runs.budget import BudgetGuard
+from evcarry.runs.budget import BudgetError, BudgetGuard
 from evcarry.runs.config import ExperimentConfig
 from evcarry.trace.index import write_index
 from evcarry.trace.processor import JsonlTraceProcessor
@@ -176,6 +177,8 @@ async def _run_gym(
 
     gym = config.gym
     policy = GymToolPolicy.load(gym.tool_policy)
+    for stale in (out_dir / "workspaces" / stem, out_dir / "logs" / stem):
+        shutil.rmtree(stale, ignore_errors=True)  # left by an unfinished earlier attempt
     env = GymTaskEnv(
         task,
         images=_gym_images(config),
@@ -185,7 +188,22 @@ async def _run_gym(
         eval_timeout=gym.eval_timeout_s,
     )
     ledger = Ledger()
-    async with env:
+    try:
+        await env.__aenter__()
+    except (EnvironmentUnavailable, RuntimeError) as exc:
+        # This task's environment could not start (a server, preprocess, or docker step failed).
+        # The run ends here and is not graded; other runs continue.
+        writer.write({"type": "environment", "kind": "docker", **env.info.as_dict(), "error": str(exc)[:2000]})
+        return {
+            "agent_status": "not_started",
+            "status": "env_error",
+            "passed": None,
+            "eval_ran": False,
+            "error": str(exc)[:1000],
+            "gym_run_id": env.info.run_id,
+            "timings": {key: round(value, 3) for key, value in env.info.timings.items()},
+        }
+    try:
         mcp_tools = sorted(name for name in env.catalog if name not in (CLAIM_DONE, PYTHON_EXECUTE))
         catalog = {**env.catalog, VIEW_OVERLONG: OVERLONG_META}
         router = ToolRouter(env, {VIEW_OVERLONG: overlong_view(ledger, gym.tool_output_chars)})
@@ -220,6 +238,8 @@ async def _run_gym(
         evaluation = await env.evaluate()
         if gym.export_workspace:
             await env.export_workspace(out_dir / "workspaces" / stem)
+    finally:
+        await env.__aexit__(None, None, None)
     write_ledger(out_dir / "ledgers" / f"{stem}.json", ledger)
     return {
         **outcome,
@@ -398,7 +418,6 @@ async def run_experiment(
         pending.append((task_name, arm_name, seed, path))
 
     async def _one(task_name: str, arm_name: str, seed: int) -> None:
-        guard.check(billable=billable, now=datetime.now(timezone.utc))
         script = _script_for(arm_name, script_overrides, model_config.kind, config.script_dir)
         cost = await _run_one(
             config=config,
@@ -415,6 +434,7 @@ async def run_experiment(
     if config.parallel_tasks <= 1 or stop_after is not None:
         finished = 0
         for task_name, arm_name, seed, path in pending:
+            guard.check(billable=billable, now=datetime.now(timezone.utc))
             await _one(task_name, arm_name, seed)
             written.append(path)
             finished += 1
@@ -422,22 +442,35 @@ async def run_experiment(
                 break
     else:
         semaphore = asyncio.Semaphore(config.parallel_tasks)
+        refusals: list[BudgetError] = []
 
-        async def _bounded(item: tuple[str, str, int, Path]) -> Path:
+        async def _bounded(item: tuple[str, str, int, Path]) -> Path | None:
             task_name, arm_name, seed, path = item
             async with semaphore:
+                if refusals:
+                    return None
+                try:
+                    guard.check(billable=billable, now=datetime.now(timezone.utc))
+                except BudgetError as exc:
+                    # Start nothing new; runs already going (and paid for) finish.
+                    refusals.append(exc)
+                    return None
                 await _one(task_name, arm_name, seed)
                 return path
 
         tasks = [asyncio.create_task(_bounded(item)) for item in pending]
         try:
-            written = list(await asyncio.gather(*tasks))
+            results = await asyncio.gather(*tasks)
         except BaseException:
-            # Stop the other runs and let their environments tear down before re-raising.
+            # A run failed: stop the others and let their environments tear down before re-raising.
             for item in tasks:
                 item.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
+        written = [path for path in results if path is not None]
+        if refusals:
+            write_index(destination)
+            raise refusals[0]
     if written or any(destination.glob("*.jsonl")):
         write_index(destination)
     return written

@@ -82,13 +82,14 @@ class LedgerHooks(RunHooks):
             arguments = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
         except json.JSONDecodeError:
             arguments = {}
-        entry = self.ledger.get(call_id)
+        entry = self.ledger.latest(call_id) if call_id else None
         self.writer.write(
             {
                 "type": "tool_call",
                 "agent": getattr(agent, "name", ""),
                 "tool": name,
                 "call_id": call_id,
+                "ledger_call_id": entry.call_id if entry is not None else None,
                 "read_only": meta.read_only,
                 "arguments": arguments,
                 "result_sha256": entry.sha256 if entry is not None else None,

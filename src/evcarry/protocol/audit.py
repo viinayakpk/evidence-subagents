@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from evcarry.ledger.ledger import Ledger
 from evcarry.protocol.checks import CheckContext, CheckResult, run_l0_l1
 from evcarry.protocol.judge import JudgeVerdict, LexicalJudge, run_judge
-from evcarry.protocol.replayer import ReplayResult, ToolCaller, render_tool_result, replay_claim
+from evcarry.protocol.replayer import ReplayResult, ToolCaller, replay_claim
 from evcarry.protocol.sampler import RiskContext, sample_random, sample_risk
 from evcarry.protocol.schema import Claim, SubagentReturn, ToolCallEvidence
+
+
+_ARGUMENT_CHARS = 2000
 
 
 @dataclass
@@ -48,33 +52,30 @@ def risk_context_for(payload: SubagentReturn, ledger: Ledger, l0_l1_failures: li
     )
 
 
-def _evidence_blob(claim: Claim, ledger: Ledger, replay_text: str | None) -> str:
+def _evidence_blob(claim: Claim, ledger: Ledger, readbacks: dict[str, str] | None) -> str:
+    """What the L3 judge reads: each cited call (tool and arguments), its logged result, and its read-back.
+
+    The arguments matter: a ``python_execute`` call that only prints a number is
+    visible as such. Read-only replays are not repeated here; L2 already checked
+    they match the logged result.
+    """
     parts: list[str] = []
-    if replay_text:
-        parts.append(replay_text)
+    seen: set[str] = set()
     for evidence in claim.evidence:
-        if isinstance(evidence, ToolCallEvidence):
-            entry = ledger.get(evidence.call_id)
-            if entry is not None:
-                parts.append(entry.result_text)
-    return "\n".join(parts)
-
-
-async def _replay_blob(claim: Claim, ledger: Ledger, caller: ToolCaller) -> tuple[ReplayResult, str]:
-    result = await replay_claim(claim, ledger, caller)
-    texts: list[str] = []
-    for evidence in claim.evidence:
-        if not isinstance(evidence, ToolCallEvidence):
+        if not isinstance(evidence, ToolCallEvidence) or evidence.call_id in seen:
             continue
+        seen.add(evidence.call_id)
         entry = ledger.get(evidence.call_id)
         if entry is None:
             continue
-        if entry.read_only:
-            texts.append(entry.result_text)
-        elif entry.readback_tool:
-            readback = await caller.call_tool(entry.readback_tool, dict(entry.readback_arguments or {}))
-            texts.append(render_tool_result(readback))
-    return result, "\n".join(texts)
+        arguments = json.dumps(entry.arguments, ensure_ascii=False, sort_keys=True, default=str)
+        if len(arguments) > _ARGUMENT_CHARS:
+            arguments = arguments[:_ARGUMENT_CHARS] + "...[cut]"
+        parts.append(f"--- call {entry.call_id}: {entry.tool_name} {arguments}\n{entry.result_text}")
+        readback = (readbacks or {}).get(entry.call_id)
+        if readback is not None:
+            parts.append(f"--- read-back of {entry.call_id} now ({entry.readback_tool}):\n{readback}")
+    return "\n".join(parts)
 
 
 async def audit_return(
@@ -126,14 +127,15 @@ async def audit_return(
     for claim in payload.claims:
         if claim.claim_id not in sampled:
             continue
-        replay_text = None
+        readbacks = None
         if "L2" in enabled and caller is not None:
-            replay, replay_text = await _replay_blob(claim, ledger, caller)
+            replay = await replay_claim(claim, ledger, caller)
+            readbacks = replay.readbacks
             report.replays.append(replay)
             if not replay.ok:
                 report.failures.append((claim.claim_id, f"L2: {replay.reason}"))
         if "L3" in enabled:
-            blob = _evidence_blob(claim, ledger, replay_text)
+            blob = _evidence_blob(claim, ledger, readbacks)
             verdict = await run_judge(support_judge, claim, blob)
             report.verdicts.append((claim.claim_id, verdict))
             if not verdict.supports:

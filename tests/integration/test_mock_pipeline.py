@@ -182,3 +182,23 @@ async def test_llm_judge_verdicts_are_traced(tmp_path: Path) -> None:
     assert events[0]["judge_model"] == "mock_judge"
     assert events[-1]["judge_calls"] == len(calls)
     assert events[-1]["passed"] is True
+
+
+async def test_budget_refusal_lets_running_runs_finish(tmp_path: Path, monkeypatch) -> None:
+    from evcarry.runs.budget import BudgetGuard, PeakWindowError
+
+    calls = {"n": 0}
+
+    def check(self, *, billable, now):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise PeakWindowError("peak window reached")
+
+    monkeypatch.setattr(BudgetGuard, "check", check)
+    config = load_experiment("configs/experiments/mock_e2e.yaml")
+    config.parallel_tasks = 2
+    with pytest.raises(PeakWindowError):
+        await run_experiment(config, out_dir=tmp_path)
+    files = list(tmp_path.glob("*.jsonl"))
+    assert len(files) == 2
+    assert all(read_events(path)[-1]["type"] == "run_end" for path in files)

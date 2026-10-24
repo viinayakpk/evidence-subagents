@@ -28,7 +28,7 @@ from typing import Any, Literal
 
 from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from evcarry.paths import resolve_repo_path
 from evcarry.protocol.checks import is_numeric_value, value_in_text
@@ -94,19 +94,42 @@ class JudgeOutput(BaseModel):
     reason: str = ""
     missing: list[str] = Field(default_factory=list)
 
+    @field_validator("missing", mode="before")
+    @classmethod
+    def _missing_as_strings(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple)):
+            return [str(item) for item in value]
+        return [str(value)]
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _reason_as_string(cls, value: Any) -> str:
+        return "" if value is None else str(value)
+
 
 def parse_judge_output(text: str) -> JudgeOutput:
-    """Parse the first JSON object in ``text``. Code fences and surrounding prose are ignored.
+    """Parse the last JSON object in ``text`` that has a ``verdict`` (or ``supports``) key.
 
-    The older ``{"supports": bool, "reason": str}`` shape is accepted and mapped
-    to ``supported`` / ``unverifiable``.
+    The last one is the model's answer; drafts and quoted examples come earlier.
+    Code fences and surrounding prose are ignored. The older
+    ``{"supports": bool, "reason": str}`` shape maps to ``supported`` / ``unverifiable``.
     """
-    start = text.find("{")
-    if start < 0:
-        raise ValueError("judge reply has no JSON object")
-    data, _end = json.JSONDecoder().raw_decode(text[start:])
-    if not isinstance(data, dict):
-        raise ValueError("judge reply is not a JSON object")
+    decoder = json.JSONDecoder()
+    data: dict[str, Any] | None = None
+    position = text.find("{")
+    while position >= 0:
+        try:
+            candidate, end = decoder.raw_decode(text, position)
+        except json.JSONDecodeError:
+            position = text.find("{", position + 1)
+            continue
+        if isinstance(candidate, dict) and ("verdict" in candidate or "supports" in candidate):
+            data = candidate
+        position = text.find("{", end)
+    if data is None:
+        raise ValueError("judge reply has no JSON object with a verdict")
     if "verdict" not in data and isinstance(data.get("supports"), bool):
         data = {
             "verdict": "supported" if data["supports"] else "unverifiable",
@@ -142,11 +165,14 @@ def _sha256(text: str) -> str:
 
 
 def _response_text(response: Any) -> str:
+    """The assistant message's output text only; reasoning items and blocks are skipped."""
     parts: list[str] = []
     for item in getattr(response, "output", None) or []:
+        if getattr(item, "type", None) != "message":
+            continue
         for block in getattr(item, "content", None) or []:
             text = getattr(block, "text", None)
-            if isinstance(text, str):
+            if getattr(block, "type", None) == "output_text" and isinstance(text, str):
                 parts.append(text)
     return "\n".join(parts)
 

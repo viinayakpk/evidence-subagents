@@ -119,7 +119,11 @@ def main(argv: list[str] | None = None) -> None:
     summary.add_argument("run_dir")
     check = sub.add_parser("check", help="validate a config without calling a model")
     check.add_argument("config")
-    gym = sub.add_parser("gym", help="gym Docker environment: preflight or remove leftovers")
+    gym = sub.add_parser(
+        "gym",
+        help="gym Docker environment: `check` (preflight) or `clean` (remove every evcarry-labelled "
+        "container and network, including those of an experiment still running in another process)",
+    )
     gym.add_argument("action", choices=["check", "clean"])
     gym.add_argument("--tasks", type=Path, help="with check: start and stop each listed task's environment")
     gym.add_argument("--parallel", type=int, default=4)

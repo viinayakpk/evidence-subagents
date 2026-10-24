@@ -71,7 +71,7 @@ EVCARRY_LIVE_JUDGE=local_primary uv run pytest tests/integration/test_live_judge
 
 ## Test results
 
-`uv run pytest` on the workstation: 63 passed, 2 skipped (the two opt-in live-provider tests), about 50 s. The six Docker gym tests skip with the reason when Docker, its daemon, or the images are missing (`EVCARRY_DOCKER=/nonexistent uv run pytest tests/integration/test_gym_docker.py` shows 6 skipped). A test-wide fixture refuses to build any HTTP model client, so no test can reach a paid endpoint.
+`uv run pytest` on the workstation: 71 passed, 2 skipped (the two opt-in live-provider tests), about 70 s. The nine Docker gym tests skip with the reason when Docker, its daemon, or the images are missing (`EVCARRY_DOCKER=/nonexistent uv run pytest tests/integration/test_gym_docker.py` shows them all skipped). A test-wide fixture refuses to build any HTTP model client, so no test can reach a paid endpoint.
 
 `uv run pytest` failed on this machine before this branch: the shell sources ROS Jazzy, whose pytest plugins load from `PYTHONPATH` into the Python 3.14 venv and crash, and pytest was only installed through the `dev` extra. `pyproject.toml` now disables plugin autoload (loading only `pytest_asyncio`) and adds a `dev` dependency group.
 
@@ -87,11 +87,24 @@ EVCARRY_LIVE_JUDGE=local_primary uv run pytest tests/integration/test_live_judge
 
 These change what the audit accepts; each is a one-line revert if unwanted.
 
-- L1 and L2 no longer require a `derived` claim's value to appear verbatim in the cited output; spans are still checked and L3 recomputes the value. Without this, every count or percentage a sub-agent computes is rejected. (The scripted `wc-shipping-analysis` run showed it: a method count labelled `fact` was rejected at L1 on real output.)
+- L1 and L2 no longer require a `derived` claim's value to appear verbatim in the cited output; spans are still checked. Without this, every count or percentage a sub-agent computes is rejected (the scripted `wc-shipping-analysis` run showed it: a method count labelled `fact` was rejected at L1 on real output). The cost: a derived value is now checked only by L3, and only when the claim is sampled. The `evidence` arm (L0/L1, rate 0) never checks one; at rate 0.3 a single-claim return samples nothing; a numeric fault injected into a derived claim passes L1. Derived claims already get +4 in the risk score. **Decision needed:** keep this, or always send derived claims to L3 (more judge calls, outside the audit budget).
 - L2 reports `unverifiable` instead of failing for a write with no read-back and for nondeterministic reads.
 - DeepSeek entries have `json_schema_outputs: false`: typed and evidence sub-agents get the claim schema in the prompt and their text is parsed with one repair, because DeepSeek documents `json_object` but not `json_schema` response formats. Unverified without a paid call.
 - Sub-agents get the experiment's `max_steps` as their turn limit; the Agents SDK default was 10.
 - Agent turn and time limits now end a run with `agent_status` `max_turns_reached` or `timeout` instead of stopping the whole grid. Other errors still stop it; with parallel runs the siblings are cancelled and torn down first.
+
+## Independent review
+
+A separate review of the branch found eight bugs, all fixed with a regression test each:
+
+1. An exception inside a tool (bad JSON arguments, a dead MCP server, a non-integer page) ended the run and then cancelled the grid. Tool errors now go back to the model; a task whose environment cannot start ends as `status: env_error`, `passed: null` and the grid continues.
+2. A spend-cap or peak-window refusal cancelled parallel runs already in progress (and paid for). Now no new run starts and the running ones finish before the refusal is raised.
+3. Cancelling a run while its containers were being created could leak them. Creates now finish before the cancel takes effect, and teardown removes everything carrying the run's label, off the event loop.
+4. The LLM judge read the model's reasoning text and took the first JSON object, so a drafted verdict could win. It now reads only the answer and takes the last verdict object.
+5. `view_overlong_output` pages were cut again by the display limit, hiding the end of each page.
+6. See the `derived` decision above.
+7. A `python_execute` that printed a number could serve as its own evidence. The judge now sees each cited call's tool and arguments (the code) next to its output; read-backs are no longer called twice and evidence is no longer duplicated.
+8. A timed-out preprocess, `python_execute` or evaluation kept running inside the container. Each now runs under `timeout -s KILL` in the container; a failed preprocess is an `env_error`.
 
 ## Open issues
 
@@ -101,3 +114,5 @@ These change what the audit accepts; each is a one-line revert if unwanted.
 - The `yf-portfolio-risk-excel` fixture builds its workbook with `python_execute` reading Postgres directly; the other two fixtures use only MCP tools.
 - The overlay image is 8.4 GB (the base is 4.8 GB).
 - DeepSeek's usage field names and served-model string are still unconfirmed on a real response (unchanged from M0–M3).
+- Each run builds its own API clients (agents and judge) and never closes them, as in M0–M3. Harmless for a few hundred runs; worth closing before long local grids.
+- `evcarry gym clean` removes every evcarry container, including those of an experiment running in another process. Use it only when nothing is running.

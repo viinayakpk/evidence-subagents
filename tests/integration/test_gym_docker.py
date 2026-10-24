@@ -136,3 +136,40 @@ def test_unknown_server_and_bad_image_fail_cleanly(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError):
         asyncio.run(scenario())
     _assert_gone({env.info.network, env.info.postgres, env.info.agent})
+
+
+async def test_a_task_that_cannot_start_is_recorded_and_the_grid_continues(tmp_path: Path) -> None:
+    # Its email_config.json has no password, so the gym's emails server refuses to start.
+    config = load_experiment("configs/experiments/gym_mock.yaml")
+    config.arms = ["sa"]
+    config.tasks = "tests/fixtures/tasks/gym_env_error.txt"
+    config.parallel_tasks = 2
+    await run_experiment(config, out_dir=tmp_path)
+    ends = {read_events(path)[-1]["task"]: read_events(path)[-1] for path in tmp_path.glob("*.jsonl")}
+    broken = ends["arxiv-reading-plan-excel-gcal-email"]
+    assert broken["status"] == "env_error" and broken["passed"] is None
+    assert "emails" in broken["error"]
+    assert ends["wc-shipping-analysis"]["passed"] is True
+    left = leftover_resources()
+    assert not any(end["gym_run_id"] in name for end in ends.values() for name in left["containers"] + left["networks"])
+
+
+async def test_cancelling_during_setup_leaves_nothing(tmp_path: Path) -> None:
+    task = load_task("wc-shipping-analysis", gym_task_root())
+    env = GymTaskEnv(task, log_dir=tmp_path)
+    starting = asyncio.create_task(env.__aenter__())
+    await asyncio.sleep(0.3)
+    starting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await starting
+    await env.down()
+    _assert_gone({env.info.network, env.info.postgres, env.info.agent})
+
+
+async def test_python_execute_timeout_kills_the_process_in_the_container(tmp_path: Path) -> None:
+    task = load_task("yf-portfolio-risk-excel", gym_task_root())
+    async with GymTaskEnv(task, log_dir=tmp_path) as env:
+        out = await env.call_tool("python_execute", {"code": "import time\ntime.sleep(60)", "filename": "slow.py", "timeout": 2})
+        assert out.startswith("=== TIMEOUT ===")
+        ps = await env._docker("exec", env.info.agent, "ps", "-eo", "args", check=False)
+        assert "slow.py" not in ps.stdout

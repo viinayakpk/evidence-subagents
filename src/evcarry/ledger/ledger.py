@@ -76,6 +76,14 @@ class Ledger:
     def get(self, call_id: str) -> LedgerEntry | None:
         return self.entries.get(call_id)
 
+    def latest(self, call_id: str) -> LedgerEntry | None:
+        """The newest entry recorded under ``call_id`` or one of its ``#n`` variants."""
+        found = None
+        for key, entry in self.entries.items():
+            if key == call_id or key.startswith(f"{call_id}#"):
+                found = entry
+        return found
+
     def to_json(self) -> str:
         payload = [entry.as_dict() for entry in self.entries.values()]
         return json.dumps(payload, sort_keys=True)
