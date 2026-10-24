@@ -1,6 +1,6 @@
 # evcarry
 
-Research harness for evidence-carrying sub-agent returns and spot-check audits. Milestones M0–M3 run here for $0 on a scripted model. DeepSeek, OpenRouter, and a local vLLM server are config entries for the workstation later.
+Research harness for evidence-carrying sub-agent returns and spot-check audits. Milestones M0–M3 run here for $0 on a scripted model, on fixture tasks in-process and on real Toolathlon-Gym tasks in Docker. DeepSeek, OpenRouter, and a local vLLM server are config entries.
 
 ## Setup
 
@@ -9,9 +9,11 @@ uv sync --extra dev --extra analysis
 cp .env.example .env
 ```
 
+`uv run pytest` also works without the extras: pytest is in the `dev` dependency group, and pytest loads only `pytest_asyncio` (a sourced ROS setup puts its own pytest plugins on `PYTHONPATH`).
+
 `.env.example` lists `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, the free-debug trio, and `VLLM_API_KEY=EMPTY`. Leave them empty in git. No key is committed.
 
-Toolathlon-Gym is a submodule at `third_party/toolathlon_gym` (Apache-2.0, commit `ed735ba0af71d82688a55f952a6ea11479ae7206`). It is used to load task metadata and to freeze the task lists. This checkout does not copy the unlicensed Toolathlon agent repo.
+Toolathlon-Gym is a submodule at `third_party/toolathlon_gym` (Apache-2.0, commit `ed735ba0af71d82688a55f952a6ea11479ae7206`). It provides the task metadata, the frozen task lists, and (in Docker) the task environments and their evaluation scripts. This checkout does not copy the unlicensed Toolathlon agent repo.
 
 ```bash
 git submodule update --init third_party/toolathlon_gym
@@ -29,7 +31,7 @@ make summarize
 
 `evcarry check CONFIG` validates a file. `evcarry run CONFIG --dry-run` prints the grid, the budget, and the Docker plan. A dry run does not read an API key and does not start Docker.
 
-Exit codes from `evcarry run`: spend cap `2`, weekday peak window `3`, missing API key `4`, Docker unavailable `5`.
+Exit codes from `evcarry run`: spend cap `2`, weekday peak window `3`, missing API key `4`, Docker, its daemon, or the gym images unavailable `5`. The key is checked before Docker.
 
 ## Config
 
@@ -79,11 +81,35 @@ uv run evcarry run configs/experiments/deepseek_smoke.yaml
 
 `deepseek_smoke` is in-process, arm `sa`, the three fixture tasks, cap $1, `offpeak_only`. It does not start Docker. The served model string from the response is written on every `llm_call`, because the alias `deepseek-flash` can move.
 
-The gym pilot is the real task environments. It is still a stub: Docker must exist and `EVCARRY_TOOLATHLON_DOCKER=1` must be set, and even then this milestone does not place our agent inside the gym containers. `evcarry run configs/experiments/pilot_deepseek.yaml` exits 5 until that attach work lands. On the workstation, `bash third_party/toolathlon_gym/run_parallel.sh` is the gym's own runner for checking that Postgres and the MCP servers come up. Our `DockerIsolation.plan()` returns that command and does not execute it here.
+The gym pilot runs real Toolathlon-Gym tasks; see the next section. Build the images once, check the pilot's task environments, then run it:
+
+```bash
+make gym-images                                            # ~5 min, once per gym commit
+uv run evcarry gym check --tasks tasks/pilot10.txt         # starts and stops each task environment, no model
+export DEEPSEEK_API_KEY=...
+uv run evcarry run configs/experiments/pilot_deepseek.yaml
+```
 
 Headline, when the attach exists: `make headline` (`configs/experiments/headline_deepseek.yaml`, 70 tasks, four arms, two seeds, cap $80, `offpeak_only`, eight parallel tasks, judge `local_primary` so L3 is not billed to DeepSeek). Parallel billable runs can overshoot the cap by about one batch, because the cap is checked at the start of each run.
 
 M6 hooks, not used yet: `serving/serve_primary.sh`, `serving/serve_fallback.sh`, `serving/gpu_check.sh`, `serving/smoke_test.py` (no-op unless `--hit`).
+
+## Toolathlon-Gym in Docker
+
+`environment: docker` runs each (task, arm, seed) in its own Docker network with its own Postgres container and agent container, the isolation scheme of the gym's `run_parallel.sh`. Per run (`src/evcarry/env/gym_docker.py`):
+
+1. Start Postgres from `evcarry/toolathlon-gym-pg:<commit>` (the gym dump already loaded, ready in about a second) and the agent container from `evcarry/toolathlon-gym:<commit>`.
+2. Copy the task's `initial_workspace` to `/workspace/agent_workspace` and run the task's `preprocess` module, as the gym's `TaskAgent` does.
+3. Start each MCP server the task needs inside the agent container with the command, env and cwd from the gym YAML, and talk to it over `docker exec -i` stdio (MCP SDK client in `legacy` handshake mode; two gym servers crash on `server/discover`).
+4. Run the arm. Tools are named `{server}-{tool}`, with input schemas rewritten as the gym's agent rewrites them. Local tools are `claim_done` (ends the run, as in the gym), `python_execute` (the gym's contract, run in the container) and `view_overlong_output` (pages a result cut at `gym.tool_output_chars`, default 8000 like the gym).
+5. If the agent called `claim_done`, run the task's `evaluation` module in the container; exit code 0 is a pass. Without `claim_done` the gym does not grade, and `passed` is false.
+6. Copy the workspace to `runs/<exp>/workspaces/`, write the ledger to `runs/<exp>/ledgers/`, then `docker rm -fv` and `docker network rm`.
+
+Every container and network carries `evcarry.project=evidence-subagents`. `make gym-clean` removes leftovers after a crash; `make gym-check` is the preflight. `configs/gym_tools.yaml` says which gym tools are read-only (researcher allowlist, L2 replay), which reads are nondeterministic, which output fields are masked before replay (snowflake's per-call `data_id`), and which read shows each write.
+
+The images (`scripts/build_gym_images.sh`): the gym's own Dockerfile unchanged, then `docker/gym/overlay.Dockerfile`, which builds MCP servers the upstream image leaves unbuilt (notion, canvas, fetch, woocommerce, playwright, google-sheets), connects the Postgres routers that woocommerce, canvas and notion ship but never construct (`docker/gym/wire_pg_routers.py`), and pre-builds the gym project's Python environment that `python_execute` uses. The submodule is not modified.
+
+`make gym-mock` runs `configs/experiments/gym_mock.yaml`: the scripted model on three real tasks (`sf-hr-rating-distribution`, `wc-shipping-analysis`, `yf-portfolio-risk-excel`), arms `sa`, `vanilla_mad`, `evidence_risk`, three runs in parallel, $0. The scripts (`tests/fixtures/scripts/gym/generate.py`) solve the tasks, so the gym's evaluation passes.
 
 ## Arms and audits
 
@@ -97,6 +123,8 @@ M6 hooks, not used yet: `serving/serve_primary.sh`, `serving/serve_fallback.sh`,
 | `evidence_random` | yes | yes | L0–L3, random sample |
 | `evidence_risk` | yes | yes | L0–L3, risk sample |
 
+The L3 judge is `judge_model` in the experiment YAML: `lexical`, or any `configs/models.yaml` key (`deepseek_flash`, `openrouter_pinned`, `local_primary`, `mock_judge`). An LLM judge gets the fixed prompt `prompts/v1/judge.md` and returns `{"verdict": "supported" | "contradicted" | "incomplete" | "unverifiable", "missing": [...], "reason": ...}`; only `supported` passes. Each call is a `judge_call` trace event (prompt and request hashes, raw reply, tokens, cost); `run_end` has `judge_calls` and `judge_cost_usd`, and a billable judge counts toward the spend cap. If a call or its parse fails, the lexical judge decides and the verdict says `lexical_fallback`.
+
 The arm name picks the sampler. YAML supplies the rate for the spot-check arms. L0/L1 failures reject a return even when that claim was not sampled. The policy accepts, or re-delegates once with the failed claims named, then falls back to the main agent. There is no third attempt.
 
 The fault injector is off unless an experiment sets `inject`. The decision key is `task|seed|return_index` and does not include the arm. `make fault-mock` prints the synthetic catch table. Notebook `analysis/03_fault_injection.ipynb` calls the same function.
@@ -109,9 +137,9 @@ The system prompt is the frozen file under `prompts/v1/` and is the cache prefix
 
 ## Deviations
 
-1. Docker and Toolathlon containers are stubbed. The gym submodule loads tasks. M0–M3 does not run our agent inside gym containers, and it does not run gym `preprocess` (that needs Postgres). Fixture tasks set `evcarry_local_eval` and use a small local checker. Real tasks return `not_run`.
+1. Fixture tasks (`environment: in_process`) set `evcarry_local_eval` and use a small local checker. Gym tasks (`environment: docker`) run in containers and are graded by their own evaluation scripts; see "Toolathlon-Gym in Docker" for what the overlay image changes and why.
 2. MS-Eval appendix prompts are not copied. `prompts/v1/` is original text.
-3. L3 is a lexical stand-in until a local model exists. It requires hyphenated tokens, a non-numeric string value, and list items to appear in the evidence. Ordinary words are ignored, so omissions of list items whose remaining words still appear are not caught. The synthetic omission catch rate is 0 on purpose. `ModelJudge` is the hook for a real model that returns `{"supports": bool, "reason": str}`.
+3. L3 is the lexical judge unless `judge_model` names a model. The lexical judge requires hyphenated tokens, a non-numeric string value, and list items to appear in the evidence, so it does not catch an omitted list item. In the synthetic fault table the omission rows now start from a claim listing all five papers and drop one that the cited evidence still shows; the lexical judge misses both rows and the scripted judge (`make fault-judge`) catches both at L3, with no rejects on the two clean claims.
 4. Agents SDK 0.24 already runs function tools from one turn concurrently (`tool_execution.max_function_tool_concurrency`). No batch tool was added. The SDK 0.24 install also has no `agents.testing.ScriptedModel`; `FixtureModel` implements the public `Model` interface.
 5. Peak windows stay in UTC. The Prague display shifts on 2026-10-25; the UTC windows do not.
 6. `pool160`, `subset70`, and `pilot10` are an algorithmic stratified sample (seed `20261024`, largest remainder, then `random.Random(seed)` inside sorted stratum names). They are not hand-reviewed. Do not re-roll them; `scripts/freeze_task_lists.py` is only for a new gym commit.
@@ -121,11 +149,16 @@ The system prompt is the frozen file under `prompts/v1/` and is the cache prefix
 10. Task-specific gym system prompts are not the frozen system prefix.
 11. The OpenRouter example price table is not a real rate card.
 12. Parallel paid runs can slightly overshoot the spend cap.
+13. L1 and L2 do not look for a `derived` claim's value in the cited output (a count or rate is computed, not quoted); its spans are still checked and L3 recomputes it.
+14. L2 reports `unverifiable` (not a failure) for a write with no read-back in `configs/gym_tools.yaml` and for reads marked nondeterministic there. L3 still runs on those claims.
+15. Gym runs use `prompts/gym_v1/` (the gym's workspace and `claim_done` instructions, a fixed workspace path so the system prompt is byte-identical across runs, and a return-format section per arm). Tool results carry a `[call_id: ...]` header so a real model can cite them.
+16. DeepSeek and the OpenRouter DeepSeek route have `json_schema_outputs: false`: typed and evidence sub-agents get the claim schema in the prompt and their text is parsed (one repair), because DeepSeek documents `json_object` but not `json_schema`.
+17. Sub-agent runs get the experiment's `max_steps` as their turn limit (the SDK default is 10).
 
 ## Open issues
 
-- Attaching this harness to per-task gym MCP servers and Postgres is not implemented.
-- Lexical L3 misses omissions. A real judge is an M6 local model.
+- See `docs/STATUS_gym_judge.md` for the gym findings that need a decision before paid runs: tasks whose SA agent gets more than 128 tools (28 of `subset70`, 3 of `pilot10`), gym tasks whose evaluation needs a sender address the email tool cannot set (`sf-sla-breach-audit` in `pilot10`), and email configs without a password (one task in `subset70`).
+- The LLM judge has only been run against the scripted provider. Its omission catch rate on a real model is untested (`EVCARRY_LIVE_JUDGE=local_primary uv run pytest tests/integration/test_live_judge.py -s` once vLLM is up).
 - DeepSeek cache field names are the documented ones (`prompt_cache_hit_tokens`, `prompt_cache_miss_tokens`, plus the OpenAI details object). Confirm them on a real M4 response.
 - OpenRouter omits router metadata on some cache hits, so `served_provider` can be unobserved. The trace says so instead of inventing a provider.
 - The task subset is algorithmic, not manually stratified.
