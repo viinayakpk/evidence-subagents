@@ -110,6 +110,47 @@ async def test_resume_skips_finished_file(tmp_path: Path) -> None:
     assert partial == full
 
 
+async def test_restart_counts_spend_already_logged_and_keeps_aborted_traces(tmp_path: Path, monkeypatch) -> None:
+    """The cap used to start at $0 on every invocation, and an unfinished trace (paid calls) was deleted."""
+    from evcarry.runs.budget import BudgetGuard
+    from evcarry.trace.writer import run_path
+
+    config = load_experiment("configs/experiments/mock_e2e.yaml")
+    config.arms = ["sa", "vanilla_mad"]
+    config.tasks = "tests/fixtures/tasks/one_sections.txt"
+    finished = run_path(tmp_path, "fixture-sections", "sa", "mock-scripted", 1)
+    finished.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in (
+                {"type": "run_start"},
+                {"type": "llm_call", "cost_usd": 0.6},
+                {"type": "run_end", "task": "fixture-sections", "arm": "sa", "seed": 1, "passed": True, "cost_usd": 0.6},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    unfinished = run_path(tmp_path, "fixture-sections", "vanilla_mad", "mock-scripted", 1)
+    unfinished.write_text(
+        '{"type": "run_start"}\n{"type": "llm_call", "cost_usd": 0.5}\n{"type": "judge_call", "cost_usd": 0.1}\n{"type": "llm_',
+        encoding="utf-8",
+    )
+    seen: list[float] = []
+    original = BudgetGuard.check
+
+    def check(self, *, billable, now):
+        seen.append(self.spent_usd)
+        return original(self, billable=billable, now=now)
+
+    monkeypatch.setattr(BudgetGuard, "check", check)
+    await run_experiment(config, out_dir=tmp_path)
+    assert seen == [pytest.approx(1.2)]
+    aborted = tmp_path / f"{unfinished.name}.aborted-1"
+    assert aborted.is_file() and '"cost_usd": 0.5' in aborted.read_text(encoding="utf-8")
+    assert read_events(unfinished)[-1]["type"] == "run_end"
+
+
 def test_cli_dry_run_and_exit_codes(capsys, monkeypatch) -> None:
     main(["run", "configs/experiments/mock_e2e.yaml", "--dry-run"])
     out = capsys.readouterr().out

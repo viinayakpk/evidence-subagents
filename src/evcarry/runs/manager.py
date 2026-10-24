@@ -2,7 +2,9 @@
 
 Parallel billable runs check the spend cap before they start and add cost
 after they finish, so they can overshoot the cap by about one batch.
-Off-peak is checked at the start of each run, not mid-run.
+Off-peak is checked at the start of each run, not mid-run. The cap counts
+everything already logged in the output directory, including earlier
+invocations and aborted runs (kept as ``*.jsonl.aborted-<n>``).
 
 ``environment: in_process`` runs the fixture tasks against the in-process
 fake MCP server. ``environment: docker`` runs real Toolathlon-Gym tasks, one
@@ -74,6 +76,33 @@ def _sha256_file(path: Path) -> str:
 
 def load_script_file(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def logged_spend(out_dir: Path) -> float:
+    """Dollars already logged in ``out_dir``: every ``llm_call`` and ``judge_call``, finished or aborted runs.
+
+    The spend cap starts from this, so a restart (the plan runs one seed per
+    weekend) does not reset what was already spent.
+    """
+    total = 0.0
+    for path in [*out_dir.glob("*.jsonl"), *out_dir.glob("*.jsonl.aborted-*")]:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a line cut short when the process was killed
+            if isinstance(event, dict) and event.get("type") in ("llm_call", "judge_call"):
+                total += float(event.get("cost_usd") or 0)
+    return total
+
+
+def _set_aside(path: Path) -> Path:
+    """Keep an unfinished trace as ``<name>.aborted-<n>``: its calls were paid for and count toward the cap."""
+    n = 1
+    while (target := path.with_name(f"{path.name}.aborted-{n}")).exists():
+        n += 1
+    path.rename(target)
+    return target
 
 
 def default_script_path(arm_name: str, script_dir: str = "tests/fixtures/scripts") -> Path:
@@ -274,7 +303,7 @@ async def _run_one(
     path = run_path(out_dir, task_name, arm_name, model_config.model or model_config.name, seed)
     stem = f"{task_name}__{arm_name}__{seed}"
     if path.exists() and not has_run_end(path):
-        path.unlink()
+        _set_aside(path)
     writer = JsonlWriter(path)
     token = current_writer.set(writer)
     try:
@@ -401,13 +430,14 @@ async def run_experiment(
     if config.environment == "docker":
         DockerIsolation(_gym_images(config)).up()
     price = model_config.price_table()
+    destination = out_dir or resolve_repo_path(config.out)
+    destination.mkdir(parents=True, exist_ok=True)
     guard = BudgetGuard(
         cap_usd=config.budget.cap_usd,
         schedule=config.budget.schedule,
         price=price,
+        spent_usd=logged_spend(destination),
     )
-    destination = out_dir or resolve_repo_path(config.out)
-    destination.mkdir(parents=True, exist_ok=True)
     billable = model_config.billable or (config.judge_model in models and models[config.judge_model].billable)
     written: list[Path] = []
     pending = []
