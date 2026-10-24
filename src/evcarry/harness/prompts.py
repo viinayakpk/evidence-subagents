@@ -28,3 +28,17 @@ def prompt_path(prompts_dir: str | Path, name: str) -> Path:
 
 def prompt_text(prompts_dir: str | Path, name: str) -> str:
     return prompt_path(prompts_dir, name).read_text(encoding="utf-8")
+
+
+def subagent_instructions(prompts_dir: str | Path, role: str, schema: bool) -> str:
+    """Role prompt, then the return-format file for the arm if the prompt set has one.
+
+    ``return_claims.md`` (typed and evidence arms) or ``return_text.md`` (free-text
+    arms) is appended after a blank line. ``prompts/v1`` has neither file, so the
+    fixture prompts are the role files unchanged.
+    """
+    text = prompt_text(prompts_dir, role)
+    suffix = prompt_path(prompts_dir, "return_claims.md" if schema else "return_text.md")
+    if suffix.is_file():
+        text = text.rstrip("\n") + "\n\n" + suffix.read_text(encoding="utf-8")
+    return text

@@ -34,6 +34,11 @@ class ModelConfig:
     routing: dict[str, Any] | None = None
     base_url_env: str | None = None
     model_env: str | None = None
+    # False: the provider may reject json_schema response_format, so structured
+    # sub-agent returns are requested in the prompt and parsed from text.
+    json_schema_outputs: bool = True
+    # Scripted judge fixture (kind: scripted); see providers.scripted.KeyedFixtureModel.
+    script: str | None = None
 
     def price_table(self) -> PriceTable:
         if not self.prices:
@@ -66,6 +71,8 @@ def load_models(path: str | Path | None = None) -> dict[str, ModelConfig]:
             routing=body.get("routing"),
             base_url_env=body.get("base_url_env"),
             model_env=body.get("model_env"),
+            json_schema_outputs=bool(body.get("json_schema_outputs", True)),
+            script=body.get("script"),
         )
     return loaded
 

@@ -1,4 +1,4 @@
-"""``evcarry run|summarize|check``."""
+"""``evcarry run|summarize|check|gym``."""
 
 from __future__ import annotations
 
@@ -52,6 +52,63 @@ def check_config(path: Path) -> str:
     return "ok\n" + report
 
 
+def gym_tasks_report(task_list: Path, parallel: int) -> tuple[str, bool]:
+    """Start and stop every listed task's environment; one line per task. 128 is a common tool limit."""
+    from evcarry.env.gym_docker import smoke_task
+    from evcarry.env.toolathlon import gym_task_root, load_task, load_task_list
+    from evcarry.paths import resolve_repo_path
+
+    names = load_task_list(resolve_repo_path(task_list))
+    log_root = resolve_repo_path("runs/gym_check")
+
+    async def run_all() -> list[dict]:
+        gate = asyncio.Semaphore(parallel)
+
+        async def one(name: str) -> dict:
+            async with gate:
+                return await smoke_task(load_task(name, gym_task_root()), log_dir=log_root / name)
+
+        return list(await asyncio.gather(*(one(name) for name in names)))
+
+    rows = asyncio.run(run_all())
+    lines = []
+    for row in rows:
+        if not row["ok"]:
+            lines.append(f"FAIL {row['task']}: {row['error']}")
+            continue
+        flags = []
+        if row["preprocess_rc"] not in (0, None):
+            flags.append(f"preprocess rc={row['preprocess_rc']}")
+        if row["tools"] + 1 > 128:  # + view_overlong_output
+            flags.append(f"{row['tools'] + 1} tools for the SA agent (over 128)")
+        status = "WARN" if flags else "ok  "
+        detail = f" [{'; '.join(flags)}]" if flags else ""
+        lines.append(f"{status} {row['task']}: {row['tools']} tools, setup {row['timings'].get('setup_s')}s{detail}")
+    failed = sum(1 for row in rows if not row["ok"])
+    lines.append(f"{len(rows) - failed}/{len(rows)} task environments started; logs in {log_root}")
+    return "\n".join(lines), failed == 0
+
+
+def gym_command(action: str, tasks: Path | None = None, parallel: int = 4) -> str:
+    from evcarry.env.gym_docker import GymImages, clean_leftovers, leftover_resources, preflight
+
+    if action == "clean":
+        removed = clean_leftovers()
+        return f"removed containers {removed['containers']} and networks {removed['networks']}"
+    images = GymImages.default()
+    docker = preflight(images)
+    left = leftover_resources(docker)
+    lines = [f"docker: {docker}", f"agent image: {images.agent}", f"postgres image: {images.postgres}"]
+    lines.append(f"leftover containers: {left['containers'] or 'none'}; networks: {left['networks'] or 'none'}")
+    lines.append("ok: docker-environment experiments can start")
+    if tasks is not None:
+        report, ok = gym_tasks_report(tasks, parallel)
+        lines.append(report)
+        if not ok:
+            raise EnvironmentUnavailable("\n".join(lines))
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="evcarry")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -62,6 +119,14 @@ def main(argv: list[str] | None = None) -> None:
     summary.add_argument("run_dir")
     check = sub.add_parser("check", help="validate a config without calling a model")
     check.add_argument("config")
+    gym = sub.add_parser(
+        "gym",
+        help="gym Docker environment: `check` (preflight) or `clean` (remove every evcarry-labelled "
+        "container and network, including those of an experiment still running in another process)",
+    )
+    gym.add_argument("action", choices=["check", "clean"])
+    gym.add_argument("--tasks", type=Path, help="with check: start and stop each listed task's environment")
+    gym.add_argument("--parallel", type=int, default=4)
     args = parser.parse_args(argv)
     try:
         if args.command == "check":
@@ -69,6 +134,9 @@ def main(argv: list[str] | None = None) -> None:
             return
         if args.command == "summarize":
             print(summarize(Path(args.run_dir)))
+            return
+        if args.command == "gym":
+            print(gym_command(args.action, args.tasks, args.parallel))
             return
         config = load_experiment(args.config)
         if args.dry_run:

@@ -1,0 +1,43 @@
+{
+ "served_model": "mock-scripted",
+ "tasks": {
+  "sf-hr-rating-distribution": {
+   "agents": {
+    "main": [
+     {
+      "arguments": {},
+      "call_id": "m_done",
+      "tool": "claim_done"
+     }
+    ]
+   }
+  },
+  "wc-shipping-analysis": {
+   "agents": {
+    "main": [
+     {
+      "arguments": {},
+      "call_id": "m_done",
+      "tool": "claim_done"
+     }
+    ]
+   }
+  },
+  "yf-portfolio-risk-excel": {
+   "agents": {
+    "main": [
+     {
+      "arguments": {},
+      "call_id": "m_done",
+      "tool": "claim_done"
+     }
+    ]
+   }
+  }
+ },
+ "usage": {
+  "cached_tokens": 900,
+  "input_tokens": 1200,
+  "output_tokens": 150
+ }
+}

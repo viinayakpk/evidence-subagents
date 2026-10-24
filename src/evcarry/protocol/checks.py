@@ -150,6 +150,10 @@ def _l1(claim: Claim, evidence: object, text: str) -> tuple[bool, str]:
     span = getattr(evidence, "span", None)
     if isinstance(span, str) and span not in text:
         return False, "quoted span is not in the logged result"
+    # A derived value (sum, rate, ranking) is computed from the evidence and need
+    # not appear in it verbatim; L3 recomputes it. Its spans are still checked.
+    if claim.kind == "derived":
+        return True, "span matches the logged result; derived value left to L3"
     if is_numeric_value(claim.value) and canonical_number(claim.value) not in text:
         return False, f"numeric value {canonical_number(claim.value)} is not in the logged result"
     return True, "span and numeric value match the logged result"

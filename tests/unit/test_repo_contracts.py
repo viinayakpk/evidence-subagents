@@ -51,11 +51,12 @@ def test_prompt_bytes_and_sorted_tools() -> None:
     assert names == sorted(names)
 
 
-def test_docker_plan_refuses_without_flag(monkeypatch) -> None:
+def test_docker_plan_and_refusal_without_docker(monkeypatch) -> None:
     plan = DockerIsolation().plan()
     assert any("run_parallel.sh" in part for part in plan)
-    monkeypatch.delenv("EVCARRY_TOOLATHLON_DOCKER", raising=False)
-    with pytest.raises(EnvironmentUnavailable):
+    assert any("evcarry/toolathlon-gym:ed735ba" in part for part in plan)
+    monkeypatch.setenv("EVCARRY_DOCKER", "/nonexistent/docker")
+    with pytest.raises(EnvironmentUnavailable, match="not installed"):
         DockerIsolation().up()
 
 

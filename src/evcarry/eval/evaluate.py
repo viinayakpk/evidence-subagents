@@ -1,7 +1,8 @@
-"""Run a fixture evaluation script, or record that a real gym task was not run.
+"""Run a fixture task's local evaluation script (``environment: in_process``).
 
-``evcarry_local_eval`` must be true. Real Toolathlon evaluation scripts are
-not executed from this harness.
+``evcarry_local_eval`` must be true; other tasks return ``not_run`` here.
+Real Toolathlon-Gym tasks are graded inside their own container by
+``evcarry.env.gym_docker.GymTaskEnv.evaluate`` (``environment: docker``).
 """
 
 from __future__ import annotations

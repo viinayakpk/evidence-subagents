@@ -20,15 +20,24 @@ def _sha256(text: str) -> str:
 
 
 class LedgerHooks(RunHooks):
-    """Record MCP tool calls and model calls for one run.
+    """Trace MCP tool calls and model calls for one run.
 
-    Agent-as-tool calls are skipped: the nested hooks see the real MCP calls.
+    The tools write the ledger themselves (``harness.tools``); this hook writes
+    the ``tool_call`` and ``llm_call`` trace events. Agent-as-tool calls are
+    skipped: the nested hooks see the real MCP calls.
     """
 
-    def __init__(self, ledger: Ledger, writer: JsonlWriter, price: PriceTable) -> None:
+    def __init__(
+        self,
+        ledger: Ledger,
+        writer: JsonlWriter,
+        price: PriceTable,
+        catalog: dict[str, Any] | None = None,
+    ) -> None:
         self.ledger = ledger
         self.writer = writer
         self.price = price
+        self.catalog = catalog
 
     async def on_llm_end(self, context: Any, agent: Any, response: Any) -> None:
         del context, response
@@ -64,7 +73,7 @@ class LedgerHooks(RunHooks):
             return
         name = getattr(tool, "name", "")
         try:
-            meta = meta_for(name)
+            meta = meta_for(name, self.catalog)
         except KeyError:
             return
         call_id = getattr(context, "tool_call_id", "") or ""
@@ -73,23 +82,17 @@ class LedgerHooks(RunHooks):
             arguments = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
         except json.JSONDecodeError:
             arguments = {}
-        text = result if isinstance(result, str) else str(result)
-        self.ledger.record(
-            call_id=call_id,
-            tool_name=name,
-            arguments=arguments,
-            result_text=text,
-            read_only=meta.read_only,
-            readback_tool=meta.readback_tool,
-            readback_arguments=meta.readback_arguments,
-        )
+        entry = self.ledger.latest(call_id) if call_id else None
         self.writer.write(
             {
                 "type": "tool_call",
                 "agent": getattr(agent, "name", ""),
                 "tool": name,
                 "call_id": call_id,
+                "ledger_call_id": entry.call_id if entry is not None else None,
                 "read_only": meta.read_only,
                 "arguments": arguments,
+                "result_sha256": entry.sha256 if entry is not None else None,
+                "result_chars": len(entry.result_text) if entry is not None else None,
             }
         )

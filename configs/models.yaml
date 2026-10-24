@@ -6,6 +6,9 @@ deepseek_flash:
   api_key_env: DEEPSEEK_API_KEY
   billable: true
   prices: configs/prices/deepseek_2026-10-24.yaml
+  # DeepSeek documents response_format json_object, not json_schema. Typed and
+  # evidence sub-agents get the claim schema in the prompt and are parsed from text.
+  json_schema_outputs: false
 local_primary:
   kind: vllm
   base_url: http://127.0.0.1:8000/v1
@@ -19,6 +22,13 @@ mock:
   model: mock-scripted
   billable: false
   prices: configs/prices/local_zero.yaml
+# Scripted L3 judge: replies by matching the claim text (providers.scripted.KeyedFixtureModel).
+mock_judge:
+  kind: scripted
+  model: mock-judge
+  script: tests/fixtures/judge/synthetic.json
+  billable: false
+  prices: configs/prices/local_zero.yaml
 openrouter_pinned:
   kind: openrouter
   base_url: https://openrouter.ai/api/v1
@@ -28,6 +38,7 @@ openrouter_pinned:
   x_title: evcarry
   billable: true
   prices: configs/prices/openrouter_example_2026-10-24.yaml
+  json_schema_outputs: false
   routing:
     order: [deepseek]
     allow_fallbacks: false

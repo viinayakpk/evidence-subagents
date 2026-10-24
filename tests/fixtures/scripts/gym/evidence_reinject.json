@@ -1,0 +1,266 @@
+{
+ "served_model": "mock-scripted",
+ "tasks": {
+  "sf-hr-rating-distribution": {
+   "agents": {
+    "main": [
+     {
+      "arguments": {
+       "input": "Count employees by department and performance rating in the HR data warehouse."
+      },
+      "call_id": "m_research",
+      "tool": "researcher"
+     },
+     {
+      "arguments": {
+       "input": "Create /workspace/agent_workspace/HR_Rating_Distribution.xlsx with the 'Rating Distribution' and 'Summary' sheets from these counts, then email hr-analytics@company.com with subject 'Performance Rating Distribution Report'."
+      },
+      "call_id": "m_operate",
+      "tool": "operator"
+     },
+     {
+      "arguments": {},
+      "call_id": "m_done",
+      "tool": "claim_done"
+     }
+    ],
+    "operator": [
+     {
+      "arguments": {
+       "filepath": "/workspace/agent_workspace/HR_Rating_Distribution.xlsx"
+      },
+      "call_id": "w_book",
+      "tool": "excel-create_workbook"
+     },
+     {
+      "arguments": {
+       "data": [
+        [
+         "Dept_Rating",
+         "Count"
+        ],
+        [
+         "Engineering - 1",
+         375
+        ],
+        [
+         "Engineering - 2",
+         1006
+        ],
+        [
+         "Engineering - 3",
+         3180
+        ],
+        [
+         "Engineering - 4",
+         1814
+        ],
+        [
+         "Engineering - 5",
+         721
+        ],
+        [
+         "Finance - 1",
+         334
+        ],
+        [
+         "Finance - 2",
+         1053
+        ],
+        [
+         "Finance - 3",
+         3251
+        ],
+        [
+         "Finance - 4",
+         1789
+        ],
+        [
+         "Finance - 5",
+         721
+        ],
+        [
+         "HR - 1",
+         358
+        ],
+        [
+         "HR - 2",
+         1067
+        ],
+        [
+         "HR - 3",
+         3167
+        ],
+        [
+         "HR - 4",
+         1745
+        ],
+        [
+         "HR - 5",
+         740
+        ],
+        [
+         "Operations - 1",
+         380
+        ],
+        [
+         "Operations - 2",
+         1051
+        ],
+        [
+         "Operations - 3",
+         3263
+        ],
+        [
+         "Operations - 4",
+         1739
+        ],
+        [
+         "Operations - 5",
+         687
+        ],
+        [
+         "R&D - 1",
+         362
+        ],
+        [
+         "R&D - 2",
+         1053
+        ],
+        [
+         "R&D - 3",
+         3190
+        ],
+        [
+         "R&D - 4",
+         1785
+        ],
+        [
+         "R&D - 5",
+         693
+        ],
+        [
+         "Sales - 1",
+         373
+        ],
+        [
+         "Sales - 2",
+         1121
+        ],
+        [
+         "Sales - 3",
+         3215
+        ],
+        [
+         "Sales - 4",
+         1829
+        ],
+        [
+         "Sales - 5",
+         694
+        ],
+        [
+         "Support - 1",
+         371
+        ],
+        [
+         "Support - 2",
+         1108
+        ],
+        [
+         "Support - 3",
+         3250
+        ],
+        [
+         "Support - 4",
+         1763
+        ],
+        [
+         "Support - 5",
+         752
+        ]
+       ],
+       "filepath": "/workspace/agent_workspace/HR_Rating_Distribution.xlsx",
+       "sheet_name": "Rating Distribution"
+      },
+      "call_id": "w_dist",
+      "tool": "excel-write_data_to_excel"
+     },
+     {
+      "arguments": {
+       "data": [
+        [
+         "Metric",
+         "Value"
+        ],
+        [
+         "Total_Employees",
+         50000
+        ],
+        [
+         "Rating_5_Count",
+         5008
+        ],
+        [
+         "Rating_4_Count",
+         12464
+        ],
+        [
+         "Rating_1_Count",
+         2553
+        ],
+        [
+         "High_Performers_Pct",
+         34.9
+        ]
+       ],
+       "filepath": "/workspace/agent_workspace/HR_Rating_Distribution.xlsx",
+       "sheet_name": "Summary"
+      },
+      "call_id": "w_summary",
+      "tool": "excel-write_data_to_excel"
+     },
+     {
+      "arguments": {
+       "body": "Performance rating distribution across 50000 employees: 5008 rated 5, 12464 rated 4, 2553 rated 1. High performers (rating 4 or 5): 34.9%.",
+       "subject": "Performance Rating Distribution Report",
+       "to": "hr-analytics@company.com"
+      },
+      "call_id": "w_email",
+      "tool": "emails-send_email"
+     },
+     {
+      "content": "{\"claims\": [{\"claim_id\": \"c1\", \"confidence\": \"high\", \"depends_on\": [], \"evidence\": [{\"call_id\": \"w_dist\", \"span\": \"Data written to Rating Distribution\", \"type\": \"tool_call\"}], \"kind\": \"artifact\", \"text\": \"Wrote the Rating Distribution sheet of HR_Rating_Distribution.xlsx.\", \"value\": \"Engineering - 5\"}, {\"claim_id\": \"c2\", \"confidence\": \"high\", \"depends_on\": [], \"evidence\": [{\"call_id\": \"w_summary\", \"span\": \"Data written to Summary\", \"type\": \"tool_call\"}], \"kind\": \"artifact\", \"text\": \"Wrote the Summary sheet.\", \"value\": \"High_Performers_Pct\"}, {\"claim_id\": \"c3\", \"confidence\": \"high\", \"depends_on\": [], \"evidence\": [{\"call_id\": \"w_email\", \"span\": \"Email sent successfully to hr-analytics@company.com\", \"type\": \"tool_call\"}], \"kind\": \"action_done\", \"text\": \"Emailed the distribution summary to hr-analytics@company.com.\", \"value\": \"Performance Rating Distribution Report\"}], \"open_issues\": [], \"status\": \"complete\", \"subagent_id\": \"operator\"}"
+     }
+    ],
+    "researcher": [
+     {
+      "arguments": {
+       "query": "SELECT \"DEPARTMENT\", \"PERFORMANCE_RATING\", COUNT(*) AS n FROM sf_data.\"HR_ANALYTICS__PUBLIC__EMPLOYEES\" GROUP BY 1, 2 ORDER BY 1, 2"
+      },
+      "call_id": "r_counts",
+      "tool": "snowflake-read_query"
+     },
+     {
+      "content": "{\"claims\": [{\"claim_id\": \"c1\", \"confidence\": \"high\", \"depends_on\": [], \"evidence\": [{\"call_id\": \"r_counts\", \"span\": \"N: 721\", \"type\": \"tool_call\"}], \"kind\": \"fact\", \"text\": \"Engineering has 721 employees with performance rating 5.\", \"value\": 721}, {\"claim_id\": \"c2\", \"confidence\": \"high\", \"depends_on\": [], \"evidence\": [{\"call_id\": \"r_counts\", \"span\": \"N: 752\", \"type\": \"tool_call\"}], \"kind\": \"fact\", \"text\": \"Support has 752 employees with performance rating 5.\", \"value\": 752}], \"open_issues\": [], \"status\": \"complete\", \"subagent_id\": \"researcher\"}"
+     },
+     {
+      "arguments": {
+       "query": "SELECT \"DEPARTMENT\", \"PERFORMANCE_RATING\", COUNT(*) AS n FROM sf_data.\"HR_ANALYTICS__PUBLIC__EMPLOYEES\" GROUP BY 1, 2 ORDER BY 1, 2"
+      },
+      "call_id": "r_counts_retry",
+      "tool": "snowflake-read_query"
+     },
+     {
+      "content": "{\"claims\": [{\"claim_id\": \"c1\", \"confidence\": \"high\", \"depends_on\": [], \"evidence\": [{\"call_id\": \"r_counts_retry\", \"span\": \"N: 721\", \"type\": \"tool_call\"}], \"kind\": \"fact\", \"text\": \"Engineering has 721 employees with performance rating 5.\", \"value\": 721}, {\"claim_id\": \"c2\", \"confidence\": \"high\", \"depends_on\": [], \"evidence\": [{\"call_id\": \"r_counts_retry\", \"span\": \"N: 752\", \"type\": \"tool_call\"}], \"kind\": \"fact\", \"text\": \"Support has 752 employees with performance rating 5.\", \"value\": 752}], \"open_issues\": [], \"status\": \"complete\", \"subagent_id\": \"researcher\"}"
+     }
+    ]
+   }
+  }
+ },
+ "usage": {
+  "cached_tokens": 900,
+  "input_tokens": 1200,
+  "output_tokens": 150
+ }
+}
