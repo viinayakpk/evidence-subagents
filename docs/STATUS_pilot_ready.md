@@ -1,6 +1,6 @@
 # Status: ready for the 10-task pilot
 
-Branch `feat/pilot-ready`, from `feat/gym-containers-l3-judge` at `489dbc2`. Written 2026-10-24. PR: PR_LINK
+Branch `feat/pilot-ready`, from `feat/gym-containers-l3-judge` at `489dbc2`. Written 2026-10-24. PR: https://github.com/viinayakpk/evidence-subagents/pull/3
 
 Paid calls: one, the 150-tool probe through `openrouter_ds_1017`, $0.00104. Two free metadata reads went to OpenRouter (the probe's generation stats and the model's public endpoint list). No pilot run, no model on the GPU, no process outside this project touched. Docker was used for `$0` checks only; every container and network those checks created is gone.
 
