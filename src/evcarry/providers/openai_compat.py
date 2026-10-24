@@ -166,6 +166,8 @@ class RecordingModel(OpenAIChatCompletionsModel):
         self.kind = kind
         # Prices a call that was answered (and billed) but then failed in the SDK.
         self.price = price
+        # "agent" or "judge": which run_end cost a failed call belongs to.
+        self.role = "agent"
         self.configured_model = model if isinstance(model, str) else str(model)
         self.routing = dict(routing) if routing else None
         self.extra_headers = dict(extra_headers or {})
@@ -229,6 +231,7 @@ class RecordingModel(OpenAIChatCompletionsModel):
         writer.write(
             {
                 "type": "llm_error",
+                "role": self.role,
                 "configured_model": record.configured_model,
                 "kind": record.kind,
                 "error_type": type(error).__name__,

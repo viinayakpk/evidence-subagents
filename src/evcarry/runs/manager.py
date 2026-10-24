@@ -460,16 +460,20 @@ async def _run_one(
         output_tokens = 0
         cost = 0.0
         reported = 0.0
+        judge_error_cost = 0.0
         for event in events:
             if event.get("type") in _SPEND_EVENTS and isinstance(event.get("provider_reported_cost_usd"), (int, float)):
                 reported += float(event["provider_reported_cost_usd"])
+            if event.get("type") == "llm_error" and event.get("role") == "judge":
+                judge_error_cost += float(event.get("cost_usd") or 0)
+                continue
             if event.get("type") not in ("llm_call", "llm_error"):
                 continue
             tokens = event.get("tokens") or {}
             input_tokens += int(tokens.get("input_tokens") or 0)
             output_tokens += int(tokens.get("output_tokens") or 0)
             cost += float(event.get("cost_usd") or 0)
-        judge_cost = float(getattr(judge, "cost_usd", 0.0))
+        judge_cost = float(getattr(judge, "cost_usd", 0.0)) + judge_error_cost
         spend = sum(event_spend(event) for event in events)
         writer.write(
             {

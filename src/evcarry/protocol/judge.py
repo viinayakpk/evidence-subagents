@@ -337,5 +337,6 @@ def build_judge(
         model: Any = KeyedFixtureModel(script, agent_name="judge")
     else:
         model = build_model(config, agent_name="judge")
+        model.role = "judge"  # its failed calls count as judge cost in run_end
     prompt = resolve_repo_path(prompt_file).read_text(encoding="utf-8")
     return LlmJudge(model, model_name=name, prompt=prompt, price=config.price_table(), writer=writer)

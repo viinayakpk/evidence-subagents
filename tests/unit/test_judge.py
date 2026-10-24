@@ -134,10 +134,12 @@ def test_build_judge_routes_through_the_provider_layer(monkeypatch) -> None:
         ("deepseek_flash", "https://api.deepseek.com", "deepseek-flash"),
         ("openrouter_pinned", "https://openrouter.ai/api/v1", "deepseek/deepseek-chat"),
         ("local_primary", "http://127.0.0.1:8000/v1", "primitive-ai/Qwen3.8-Flash-Next-NVFP4"),
+        ("openrouter_ds_1017", "https://openrouter.ai/api/v1", "deepseek/deepseek-v4.1-flash-1017"),
     ):
         judge = build_judge(name)
         assert isinstance(judge, LlmJudge) and isinstance(judge.model, RecordingModel)
         assert judge.model.configured_model == model
+        assert judge.model.role == "judge"  # its failed calls are judge cost in run_end
         assert seen[-1]["base_url"] == base_url
 
 

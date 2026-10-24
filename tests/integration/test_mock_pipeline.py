@@ -330,3 +330,26 @@ async def test_a_failed_run_stops_new_runs_but_lets_paid_runs_finish(tmp_path: P
     ends = {path.name: read_events(path)[-1]["type"] for path in tmp_path.glob("*.jsonl")}
     assert sorted(ends.values()) == ["run_end", "run_error"]  # nothing new started after the failure
     assert started["n"] == 2
+
+
+async def test_run_end_splits_agent_and_judge_cost_and_counts_every_billed_event(tmp_path: Path, monkeypatch) -> None:
+    from evcarry.runs import manager
+    from evcarry.trace.writer import current_writer
+
+    async def billed_run(**_kwargs):
+        writer = current_writer.get()
+        writer.write({"type": "llm_call", "cost_usd": 0.01, "provider_reported_cost_usd": 0.01, "tokens": {"input_tokens": 100, "output_tokens": 10}})
+        writer.write({"type": "llm_error", "role": "agent", "cost_usd": 0.002, "provider_reported_cost_usd": 0.002})
+        writer.write({"type": "llm_error", "role": "judge", "cost_usd": 0.003, "provider_reported_cost_usd": 0.003})
+        writer.write({"type": "judge_call", "cost_usd": 0.004, "provider_reported_cost_usd": 0.005})
+        return {"agent_status": "completed", "passed": True, "status": "ok"}
+
+    monkeypatch.setattr(manager, "_run_fixture", billed_run)
+    config = load_experiment("configs/experiments/mock_e2e.yaml")
+    config.arms, config.tasks = ["sa"], "tests/fixtures/tasks/one_sections.txt"
+    await run_experiment(config, out_dir=tmp_path)
+    end = read_events(next(tmp_path.glob("*.jsonl")))[-1]
+    assert end["cost_usd"] == pytest.approx(0.012)  # agent calls, including the answered-then-failed one
+    assert end["judge_cost_usd"] == pytest.approx(0.003)  # the lexical judge object costs 0; the failed judge call counts
+    assert end["spend_usd"] == pytest.approx(0.01 + 0.002 + 0.003 + 0.005)  # the larger of table and bill, per event
+    assert end["provider_reported_cost_usd"] == pytest.approx(0.02)
