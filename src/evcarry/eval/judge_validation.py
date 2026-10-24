@@ -60,6 +60,9 @@ class Item:
     stratum: str = ""
     weight: float = 1.0
     extra: dict[str, str] = field(default_factory=dict)
+    # Clean items a synthetic fault was made from (the source, and the donor of swapped evidence).
+    # They are kept out of the clean sample, or the labeller would see a fault next to its twin.
+    sources: tuple[str, ...] = ()
 
 
 def _item_id(*parts: object) -> str:
@@ -131,10 +134,9 @@ def _perturb_value(claim: dict[str, Any]) -> dict[str, Any] | None:
         new = round(value * 1.1 if value else 1.0, max(decimals, 1))
     # Replace the number as a whole token, not inside an identifier such as "t13".
     text, replaced = re.subn(rf"(?<![\w.]){re.escape(str(value))}(?![\w]|\.\d)", str(new), str(claim.get("text", "")), count=1)
-    changed = dict(claim, value=new)
-    if replaced:
-        changed["text"] = text
-    return changed
+    if not replaced:
+        return None  # a value that disagrees with its own text would give the fault away
+    return dict(claim, value=new, text=text)
 
 
 def _drop_item(claim: dict[str, Any]) -> dict[str, Any] | None:
@@ -145,9 +147,8 @@ def _drop_item(claim: dict[str, Any]) -> dict[str, Any] | None:
     text = str(claim.get("text", ""))
     for pattern in (f", and {dropped}", f" and {dropped}", f", {dropped}", str(dropped)):
         if pattern in text:
-            text = text.replace(pattern, "", 1)
-            break
-    return dict(claim, value=value[:-1], text=text)
+            return dict(claim, value=value[:-1], text=text.replace(pattern, "", 1))
+    return None  # the item is not in the text: dropping it from the value alone would be visible
 
 
 def synthesize_faults(items: list[Item], count: int, seed: int) -> list[Item]:
@@ -165,6 +166,7 @@ def synthesize_faults(items: list[Item], count: int, seed: int) -> list[Item]:
         for offset in range(len(kinds)):
             kind = kinds[(position + offset) % len(kinds)]
             claim, evidence = source.claim, source.evidence
+            sources = (source.item_id,)
             if kind == "value_perturbation":
                 claim = _perturb_value(source.claim)
             elif kind == "list_omission":
@@ -175,6 +177,7 @@ def synthesize_faults(items: list[Item], count: int, seed: int) -> list[Item]:
                     claim = None
                 else:
                     evidence = donor.evidence
+                    sources = (source.item_id, donor.item_id)
             if claim is None:
                 continue
             request = build_request(claim, evidence)
@@ -191,6 +194,7 @@ def synthesize_faults(items: list[Item], count: int, seed: int) -> list[Item]:
                     seed=source.seed,
                     return_index=source.return_index,
                     fault_kind=kind,
+                    sources=sources,
                 )
             )
             break
@@ -204,32 +208,40 @@ def _stratum(item: Item) -> str:
 
 
 def stratified_sample(items: list[Item], *, n: int = 100, seed: int = 0, allocation: dict[str, int] | None = None) -> list[Item]:
-    """Seeded draw per stratum; a stratum with too few items gives its places to the next ones in order."""
+    """Seeded draw per stratum: faults first, then the clean strata without the faults' twins.
+
+    Places a stratum cannot fill go to the clean strata that still have items, in order.
+    """
     quota = dict(allocation or DEFAULT_ALLOCATION)
     scale = n / sum(quota.values())
     quota = {name: round(size * scale) for name, size in quota.items()}
     groups: dict[str, list[Item]] = {name: [] for name in quota}
     for item in items:
         groups.setdefault(_stratum(item), []).append(item)
-    order = list(quota)
-    spare = 0
-    for name in order:
-        if len(groups[name]) < quota[name]:
-            spare += quota[name] - len(groups[name])
-            quota[name] = len(groups[name])
-    for name in order:
-        room = len(groups[name]) - quota[name]
-        take = min(room, spare)
-        quota[name] += take
-        spare -= take
-    chosen: list[Item] = []
-    for name in order:
-        pool = sorted(groups[name], key=lambda item: item.item_id)
-        picked = random.Random(f"sample|{seed}|{name}").sample(pool, quota[name]) if quota[name] else []
+
+    def draw(name: str, pool: list[Item], size: int) -> list[Item]:
+        return random.Random(f"sample|{seed}|{name}").sample(pool, size) if size else []
+
+    faults = sorted(groups["fault"], key=lambda item: item.item_id)
+    chosen = draw("fault", faults, min(quota["fault"], len(faults)))
+    twins = {source for item in chosen for source in item.sources}
+    for item in chosen:
+        item.stratum, item.weight = "fault", 1.0  # faults are reported on their own, unweighted
+    clean = [name for name in quota if name != "fault"]
+    populations = {name: sorted(groups[name], key=lambda item: item.item_id) for name in clean}
+    pools = {name: [item for item in populations[name] if item.item_id not in twins] for name in clean}
+    sizes = {name: min(quota[name], len(pools[name])) for name in clean}
+    spare = n - len(chosen) - sum(sizes.values())
+    for name in clean:
+        extra = min(spare, len(pools[name]) - sizes[name])
+        sizes[name] += extra
+        spare -= extra
+    for name in clean:
+        picked = draw(name, pools[name], sizes[name])
         for item in picked:
-            item.stratum = name
-            # Clean rows estimate the population of clean judged claims; faults are reported on their own.
-            item.weight = len(pool) / quota[name] if name != "fault" else 1.0
+            # Clean rows estimate the population of clean judged claims. The excluded twins are a
+            # random subset of it, so the weight uses the whole stratum.
+            item.stratum, item.weight = name, len(populations[name]) / sizes[name]
         chosen.extend(picked)
     return chosen
 

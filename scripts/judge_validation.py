@@ -11,7 +11,8 @@
     uv run python scripts/judge_validation.py judge validation/judge_v1 --model local_primary --column local
     uv run python scripts/judge_validation.py score validation/judge_v1
 
-``judge`` refuses a billable model without ``--hit`` and prints a worst-case cost first.
+``judge`` refuses a billable model without ``--hit`` or when its worst-case cost is above ``--max-usd``
+(default $1); these calls are outside any experiment's spend cap.
 Its ``judge_call`` events (provider, tokens, cost) go to ``<dir>/judge_calls_<column>.jsonl``.
 """
 
@@ -63,13 +64,17 @@ def judge(args: argparse.Namespace) -> int:
     if config.billable and not args.hit:
         print("billable model: pass --hit to make the calls")
         return 2
+    if config.billable and worst > args.max_usd:
+        print(f"worst-case cost is above --max-usd {args.max_usd}; not calling")
+        return 2
     writer = JsonlWriter(folder / f"judge_calls_{args.column}.jsonl")
+    judge_model = build_judge(args.model, writer=writer)
     try:
-        judge_model = build_judge(args.model, writer=writer)
         asked = asyncio.run(jv.judge_items(rows, judge_model, column=args.column, only_missing=args.only_missing))
     finally:
+        # Rows judged before an error (a provider mismatch, an outage) were paid for: keep them.
         writer.close()
-    jv.write_key(rows, folder / "key.csv")
+        jv.write_key(rows, folder / "key.csv")
     print(f"judged {asked} rows; cost ${getattr(judge_model, 'cost_usd', 0.0):.4f}; key updated")
     return 0
 
@@ -98,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     jud.add_argument("--column", default="judge", help="'judge' fills judge_verdict; any other name adds <name>_verdict")
     jud.add_argument("--only-missing", action="store_true")
     jud.add_argument("--hit", action="store_true", help="allow calls to a billable model")
+    jud.add_argument("--max-usd", type=float, default=1.0, help="refuse when the worst-case cost is higher")
     sco = sub.add_parser("score", help="compare judge verdicts with human_label")
     sco.add_argument("dir")
     args = parser.parse_args(argv)
