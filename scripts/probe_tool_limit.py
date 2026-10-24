@@ -156,7 +156,9 @@ async def probe(model_key: str, out: Path, max_usd: float) -> int:
         "error": error,
         "served": record.identity.as_dict() if record is not None else None,
         "usage": record.usage.as_dict() if record is not None else None,
-        "cost_usd_price_table": cost_usd(record.usage, price, datetime.now(timezone.utc)) if record else None,
+        "cost_usd_price_table": (
+            cost_usd(record.usage, price, datetime.now(timezone.utc), record.identity.response_provider) if record else None
+        ),
         "worst_case_estimate_usd": estimate,
         "response_body": captured.get("body"),
     }

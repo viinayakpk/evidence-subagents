@@ -119,9 +119,11 @@ async def test_off_pin_reply_is_refused_logged_priced_and_stops_later_calls(tmp_
     assert mismatch["type"] == "provider_mismatch" and mismatch["response_provider"] == "Novita"
     assert mismatch["generation_id"].startswith("gen-") and mismatch["provider_check"]["ok"] is False
     assert error["type"] == "llm_error" and error["error_type"] == "ProviderMismatch"
-    # The refused call was billed, so it counts toward the cap.
-    assert error["cost_usd"] == pytest.approx(0.001042132 * 1.0, rel=0.05)
-    assert logged_spend(tmp_path) == pytest.approx(error["provider_reported_cost_usd"])
+    # The refused call was billed, so it counts toward the cap; the larger of the price table and OpenRouter's cost counts.
+    assert error["provider_reported_cost_usd"] == pytest.approx(0.001042132)
+    assert error["cost_usd"] == pytest.approx(max(error["price_table_cost_usd"], error["provider_reported_cost_usd"]))
+    assert error["cost_usd"] >= error["provider_reported_cost_usd"]
+    assert logged_spend(tmp_path) == pytest.approx(error["cost_usd"])
 
 
 async def test_on_pin_reply_records_provenance(tmp_path: Path) -> None:

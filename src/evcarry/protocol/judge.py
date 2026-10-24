@@ -36,7 +36,7 @@ from evcarry.paths import resolve_repo_path
 from evcarry.protocol.checks import is_numeric_value, value_in_text
 from evcarry.protocol.schema import Claim
 from evcarry.providers.pin import ProviderMismatch
-from evcarry.providers.usage import PriceTable, cost_usd
+from evcarry.providers.usage import PriceTable
 from evcarry.runs.budget import BudgetError
 from evcarry.trace.writer import JsonlWriter, current_writer
 
@@ -247,7 +247,9 @@ class LlmJudge:
         take = getattr(self.model, "take_record", None)
         record = take() if callable(take) else None
         tokens = record.usage.as_dict() if record is not None else None
-        cost = cost_usd(record.usage, self.price, datetime.now(timezone.utc)) if record is not None else 0.0
+        # Priced at the endpoint that served the call, and never below OpenRouter's own cost.
+        priced = record.cost(self.price, datetime.now(timezone.utc)) if record is not None else None
+        cost = priced.usd if priced is not None else 0.0
         self.calls += 1
         self.cost_usd += cost
         detail = {
@@ -302,8 +304,7 @@ class LlmJudge:
                     "source": verdict.source,
                     "error": error,
                     "tokens": tokens,
-                    "cost_usd": cost,
-                    "provider_reported_cost_usd": record.usage.provider_reported_cost_usd if record is not None else None,
+                    **(priced.fields() if priced is not None else {"cost_usd": 0.0, "provider_reported_cost_usd": None}),
                     "latency_ms": detail["latency_ms"],
                 }
             )

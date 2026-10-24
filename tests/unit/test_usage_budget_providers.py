@@ -8,7 +8,7 @@ import pytest
 
 from evcarry.providers.identity import served_identity
 from evcarry.providers.registry import load_models
-from evcarry.providers.usage import PriceTable, TokenUsage, cost_usd, is_peak, token_usage_from_body
+from evcarry.providers.usage import PriceTable, Rates, TokenUsage, call_cost, cost_usd, is_peak, token_usage_from_body
 from evcarry.runs.budget import BudgetGuard, PeakWindowError, SpendCapExceeded
 
 
@@ -157,3 +157,37 @@ def test_an_empty_peak_window_list_means_no_peak() -> None:
     assert not is_peak(weekday_peak, price)
     BudgetGuard(cap_usd=5, schedule="offpeak_only", price=price).check(billable=True, now=weekday_peak)
     assert is_peak(weekday_peak, load_models()["deepseek_flash"].price_table())
+
+
+NOON = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
+
+
+def test_a_provider_with_two_endpoints_is_priced_at_the_larger_rate_of_each() -> None:
+    table = PriceTable.from_mapping({
+        "peak_windows_utc": [],
+        "endpoints": {
+            "acme/fp8": {"input_cache_miss": 0.1, "input_cache_hit": 0.01, "output": 0.5},
+            "acme/us": {"input_cache_miss": 0.2, "input_cache_hit": 0.005, "output": 0.4},
+            "cheap-co/fp8": {"input_cache_miss": 0.05, "input_cache_hit": 0.02, "output": 0.1},
+        },
+    })
+    assert table.rates_for("Acme") == (Rates(0.2, 0.01, 0.5), "acme/fp8|acme/us")
+    assert table.rates_for("CheapCo") == (Rates(0.05, 0.02, 0.1), "cheap-co/fp8")
+    # Not in the table, or not observed: the larger rate of each component over the table.
+    assert table.rates_for("Other") == table.rates_for(None) == (Rates(0.2, 0.02, 0.5), "upper_bound")
+
+
+def test_the_counted_cost_is_the_larger_of_the_served_price_and_openrouters_cost() -> None:
+    table = PriceTable.from_mapping({"peak_windows_utc": [], "per_million_tokens": {"input_cache_miss": 1, "input_cache_hit": 0.1, "output": 2}})
+    under = call_cost(TokenUsage(1_000_000, 0, 1_000_000, 0, provider_reported_cost_usd=0.5), table, NOON, "Acme")
+    assert under.usd == 1.0 and under.table_usd == 1.0 and under.reported_usd == 0.5
+    over = call_cost(TokenUsage(1_000_000, 0, 1_000_000, 0, provider_reported_cost_usd=1.5), table, NOON, "Acme")
+    assert over.usd == 1.5 and over.fields()["price_table_cost_usd"] == 1.0
+    unreported = call_cost(TokenUsage(1_000_000, 0, 1_000_000, 0), table, NOON, "Acme")
+    assert unreported.usd == 1.0 and unreported.reported_usd is None
+
+
+def test_a_single_endpoint_table_prices_every_provider_alike() -> None:
+    table = PriceTable.from_mapping({"peak_windows_utc": [], "per_million_tokens": {"input_cache_miss": 1, "input_cache_hit": 0.1, "output": 2}})
+    tokens = TokenUsage(2_000_000, 1_000_000, 1_000_000, 1_000_000)
+    assert cost_usd(tokens, table, NOON) == cost_usd(tokens, table, NOON, "Anyone") == pytest.approx(3.1)

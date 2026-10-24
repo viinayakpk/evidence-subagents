@@ -11,7 +11,7 @@ from agents import RunHooks
 
 from evcarry.harness.tools import meta_for
 from evcarry.ledger.ledger import Ledger
-from evcarry.providers.usage import PriceTable, cost_usd, is_peak
+from evcarry.providers.usage import PriceTable, is_peak
 from evcarry.trace.writer import JsonlWriter
 
 
@@ -59,10 +59,10 @@ class LedgerHooks(RunHooks):
                 "attempts": record.attempts,
                 "tokens": record.usage.as_dict(),
                 "temperature": record.temperature,
-                "cost_usd": cost_usd(record.usage, self.price, now),
+                # Priced at the endpoint that served the call, and never below OpenRouter's own cost.
+                **record.cost(self.price, now).fields(),
                 "latency_ms": record.latency_ms,
                 "peak": is_peak(now, self.price),
-                "provider_reported_cost_usd": record.usage.provider_reported_cost_usd,
                 "system_sha256": _sha256(system),
             }
         )

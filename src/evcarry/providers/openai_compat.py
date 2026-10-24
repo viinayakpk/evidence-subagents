@@ -29,8 +29,8 @@ from openai import APIConnectionError, AsyncOpenAI, InternalServerError, RateLim
 from openai.types.responses.response_prompt_param import ResponsePromptParam
 
 from evcarry.providers.identity import ServedIdentity, served_identity
-from evcarry.providers.pin import PinCheck, ProviderMismatch, check_pin, current_pin_guard
-from evcarry.providers.usage import PriceTable, TokenUsage, cost_usd, token_usage_from_body
+from evcarry.providers.pin import PinCheck, ProviderMismatch, check_pin, current_pin_guard, provider_slug
+from evcarry.providers.usage import CallCost, PriceTable, TokenUsage, call_cost, token_usage_from_body
 from evcarry.runs.budget import admit_model_call
 from evcarry.trace.writer import current_writer
 
@@ -106,6 +106,12 @@ class LlmCallRecord:
             "provider_check": self.pin.as_dict() if self.pin is not None else None,
             "temperature": self.temperature,
         }
+
+    def cost(self, price: PriceTable, at: datetime) -> CallCost:
+        """Priced at the endpoint that served the call; two disagreeing provider names get the table's upper bound."""
+        names = {provider_slug(name): name for name in (self.identity.response_provider, self.identity.served_provider) if name}
+        provider = next(iter(names.values())) if len(names) == 1 else None
+        return call_cost(self.usage, price, at, provider)
 
     def provenance(self) -> dict[str, object]:
         """Who served the call: the fields ``llm_call``, ``llm_error`` and ``judge_call`` events share."""
@@ -286,7 +292,11 @@ class RecordingModel(OpenAIChatCompletionsModel):
             return
         answered = any(200 <= int(item.get("status", 0)) < 300 for item in bucket)
         # An answered call was billed: its cost counts toward the spend cap like an llm_call's.
-        cost = cost_usd(record.usage, self.price, datetime.now(timezone.utc)) if answered and self.price else 0.0
+        if answered and self.price:
+            cost = record.cost(self.price, datetime.now(timezone.utc)).fields()
+        else:
+            reported = record.usage.provider_reported_cost_usd if answered else None
+            cost = {"cost_usd": max(0.0, reported or 0.0), "provider_reported_cost_usd": reported}
         writer.write(
             {
                 "type": "llm_error",
@@ -300,8 +310,7 @@ class RecordingModel(OpenAIChatCompletionsModel):
                 **(record.provenance() if answered else {"served_model": None}),
                 "tokens": record.usage.as_dict() if answered else None,
                 "temperature": record.temperature,
-                "cost_usd": cost,
-                "provider_reported_cost_usd": record.usage.provider_reported_cost_usd if answered else None,
+                **cost,
                 "latency_ms": record.latency_ms,
             }
         )
