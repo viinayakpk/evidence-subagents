@@ -1,8 +1,13 @@
 """Risk-based and random audit samplers.
 
 Both samplers are seeded and budget-exact. The budget is
-``round_half_up(rate * n)`` claims, capped at the number of claims.
-A rate of 0 audits nothing. ``0.3 * 1`` rounds to 0.
+``max(MIN_AUDITED_PER_RETURN, round_half_up(rate * n))`` claims, capped at the
+number of claims. A rate of 0 audits nothing. With a rate above 0, every return
+with at least one claim gets at least one audited claim (owner decision,
+2026-10-24): ``0.3 * 1`` rounds to 0, so without the floor a one-claim return
+was never audited and ``evidence_risk`` behaved like L0/L1 only. The floor is
+the same for both samplers, so the risk arm audits its top-ranked claim and the
+random arm a random one.
 """
 
 from __future__ import annotations
@@ -17,12 +22,15 @@ from evcarry.protocol.schema import Claim
 
 _NUMBER_IN_TEXT = re.compile(r"-?\d+(?:\.\d+)?")
 
+# Audited claims per return when the rate is above 0, whatever ``rate * n`` rounds to.
+MIN_AUDITED_PER_RETURN = 1
+
 
 def budget_count(n_claims: int, rate: float) -> int:
     if n_claims <= 0 or rate <= 0:
         return 0
     count = int((Decimal(str(rate)) * Decimal(n_claims)).to_integral_value(ROUND_HALF_UP))
-    return max(0, min(n_claims, count))
+    return min(n_claims, max(MIN_AUDITED_PER_RETURN, count))
 
 
 @dataclass
