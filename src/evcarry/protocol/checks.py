@@ -5,12 +5,17 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
 from evcarry.ledger.ledger import Ledger, LedgerEntry
 from evcarry.protocol.schema import Claim, DbEvidence, FileEvidence, SearchEvidence, ToolCallEvidence
 
 _NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+# Numbers in tool output. Matches are maximal digit runs, so "14" is not found inside
+# "140", "2014" or "0.145". The grouped form also reads "1,234.5" as 1234.5.
+_TEXT_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+_GROUPED_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?")
 
 
 @dataclass
@@ -65,13 +70,65 @@ def canonical_number(value: object) -> str:
     return str(value)
 
 
+def _decimal(value: object) -> Decimal | None:
+    try:
+        return Decimal(str(value).strip())
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _text_numbers(text: str) -> set[Decimal]:
+    found: set[Decimal] = set()
+    for pattern in (_TEXT_NUMBER, _GROUPED_NUMBER):
+        for match in pattern.finditer(text):
+            number = _decimal(match.group(0).replace(",", ""))
+            if number is None:
+                continue
+            start = match.start()
+            # A minus sign counts only when it is not a separator ("2026-10-11", "a-3").
+            negative = start > 0 and text[start - 1] == "-" and (start < 2 or not text[start - 2].isalnum())
+            found.add(-number if negative else number)
+    return found
+
+
+def number_in_text(value: object, text: str) -> bool:
+    """A numeric claim value appears in ``text`` as a whole number, not as a substring of a longer one.
+
+    ``0.3`` matches ``0.30`` and ``14`` matches ``14.0``. A value written with fewer
+    decimals than the text matches the text's number rounded to those decimals
+    (``3.14`` matches ``3.14159``); an integer value does not match ``14.7``.
+    """
+    target = _decimal(canonical_number(value))
+    if target is None:
+        return canonical_number(value) in text
+    exponent = target.as_tuple().exponent
+    places = -exponent if isinstance(exponent, int) and exponent < 0 else 0
+    for number in _text_numbers(text):
+        if number == target:
+            return True
+        if places:
+            try:
+                if number.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP) == target:
+                    return True
+            except InvalidOperation:  # a number too long to round at that precision
+                continue
+    return False
+
+
 def value_in_text(value: object, text: str) -> bool:
-    if value is None:
+    """Whether a claim value can be found in tool output.
+
+    Lists and dict values must all be present. A boolean carries nothing to look
+    for (a read-back does not print ``True``), so it is left to L3.
+    """
+    if value is None or isinstance(value, bool):
         return True
     if isinstance(value, (list, tuple)):
         return all(value_in_text(item, text) for item in value)
+    if isinstance(value, dict):
+        return all(value_in_text(item, text) for item in value.values())
     if is_numeric_value(value):
-        return canonical_number(value) in text
+        return number_in_text(value, text)
     return str(value) in text
 
 
@@ -154,7 +211,7 @@ def _l1(claim: Claim, evidence: object, text: str) -> tuple[bool, str]:
     # not appear in it verbatim; L3 recomputes it. Its spans are still checked.
     if claim.kind == "derived":
         return True, "span matches the logged result; derived value left to L3"
-    if is_numeric_value(claim.value) and canonical_number(claim.value) not in text:
+    if is_numeric_value(claim.value) and not number_in_text(claim.value, text):
         return False, f"numeric value {canonical_number(claim.value)} is not in the logged result"
     return True, "span and numeric value match the logged result"
 

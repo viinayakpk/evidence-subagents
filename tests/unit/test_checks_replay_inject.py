@@ -97,6 +97,32 @@ def test_l0_l1_pointers(tmp_path) -> None:
     assert run_l0_l1(empty, ctx)[0].reason == "claim has no evidence pointer"
 
 
+def test_numeric_values_match_whole_numbers_only() -> None:
+    from evcarry.protocol.checks import number_in_text, value_in_text
+
+    # A perturbed number must not pass because its digits occur inside another number.
+    assert not number_in_text(14, "report for 2014: 140 rows, rate 0.145")
+    assert number_in_text(11, "orders on 2026-10-11 were cancelled")  # a date part is still a number
+    assert not number_in_text(-10, "orders on 2026-10-11")
+    assert number_in_text(-5, "delta: -5 units")
+    assert number_in_text(0.3, "rate 0.30")
+    assert number_in_text(14, "14.0 sections")
+    assert number_in_text(1234, "total $1,234")
+    assert number_in_text(3.14, "pi is 3.14159")
+    assert not number_in_text(14, "average 14.7")
+    assert not number_in_text("0.5", "rate 10.55")
+    ledger = Ledger()
+    ledger.record(call_id="c", tool_name="t", arguments={}, result_text="2026-10-12: 140 orders", read_only=True)
+    perturbed = Claim(
+        claim_id="x", text="14 orders", kind="fact", value=14, evidence=[ToolCallEvidence(type="tool_call", call_id="c")]
+    )
+    assert any(not item.ok and item.level == "L1" for item in run_l0_l1(perturbed, CheckContext(ledger=ledger)))
+    # Booleans and dicts used to be searched as Python reprs ("True", "{'a': 1}") and always failed L2.
+    assert value_in_text(True, '{"sent": true}')
+    assert value_in_text({"region": "EU", "orders": 3}, '{"region": "EU", "orders": 3}')
+    assert not value_in_text({"region": "US"}, '{"region": "EU"}')
+
+
 def test_replayer_does_not_replay_writes(tmp_path) -> None:
     async def scenario() -> None:
         async with FakeMcp(tmp_path) as mcp:
