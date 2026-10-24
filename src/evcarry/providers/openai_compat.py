@@ -296,7 +296,8 @@ class RecordingModel(OpenAIChatCompletionsModel):
             cost = record.cost(self.price, datetime.now(timezone.utc)).fields()
         else:
             reported = record.usage.provider_reported_cost_usd if answered else None
-            cost = {"cost_usd": max(0.0, reported or 0.0), "provider_reported_cost_usd": reported}
+            billed = max(0.0, reported or 0.0)
+            cost = {"cost_usd": billed, "provider_reported_cost_usd": reported, "reference_cost_usd": billed}
         writer.write(
             {
                 "type": "llm_error",

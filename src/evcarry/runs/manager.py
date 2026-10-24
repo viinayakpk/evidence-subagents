@@ -22,6 +22,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,7 @@ from evcarry.env.toolathlon import TaskSpec, load_task, load_task_list, prepare_
 from evcarry.eval.evaluate import evaluate_task
 from evcarry.harness.agents import build_main_agent
 from evcarry.harness.arms import arm_spec, effective_audit
+from evcarry.harness.context import ContextTrimmer, current_trimmer
 from evcarry.harness.hooks import LedgerHooks
 from evcarry.harness.prompts import prompt_path
 from evcarry.harness.run_settings import TEMPERATURE, harness_run_config
@@ -54,6 +56,7 @@ from evcarry.runs.budget import (
     RunMeter,
     SpendCapExceeded,
     current_run_meter,
+    event_reference_spend,
     event_spend,
 )
 from evcarry.runs.config import ExperimentConfig
@@ -188,9 +191,10 @@ def dry_run_report(config: ExperimentConfig) -> str:
         f"environment: {config.environment}",
         f"schedule: {config.budget.schedule}",
         f"cap_usd: {config.budget.cap_usd}",
-        f"run_ceiling_usd: {config.budget.run_ceiling_usd}",
+        f"run_ceiling_usd: {config.budget.run_ceiling_usd} ({config.budget.ceiling_basis})",
         f"max_steps (main agent): {config.limits.max_steps}",
         f"subagent_max_turns: {subagent_turns(config)}",
+        f"context (tokens, enforced): {config.limits.context}",
         f"parallel_tasks: {config.parallel_tasks}",
         f"prompts: {config.prompts} {_prompt_state(config)}",
         "grid:",
@@ -291,7 +295,8 @@ async def _run_gym(
     price: Any,
     config: ExperimentConfig,
 ) -> dict[str, Any]:
-    from evcarry.env.gym_docker import CLAIM_DONE, PYTHON_EXECUTE, GymTaskEnv, ground_truth_suspects
+    from evcarry.env.contamination import contamination, removed_fingerprints, tier
+    from evcarry.env.gym_docker import CLAIM_DONE, PYTHON_EXECUTE, GymTaskEnv
     from evcarry.env.gym_tools import GymToolPolicy
 
     gym = config.gym
@@ -305,6 +310,8 @@ async def _run_gym(
         log_dir=out_dir / "logs" / stem,
         setup_timeout=gym.setup_timeout_s,
         eval_timeout=gym.eval_timeout_s,
+        network_internal=gym.network_internal,
+        hide_task_dir=gym.hide_task_dir,
     )
     ledger = Ledger()
     try:
@@ -363,13 +370,16 @@ async def _run_gym(
     finally:
         await env.__aexit__(None, None, None)
     write_ledger(out_dir / "ledgers" / f"{stem}.json", ledger)
+    # Two tiers (env.contamination): arguments that reach for ground truth, results that contain removed content.
+    found = contamination(ledger, task=task.name, fingerprints=removed_fingerprints(env.sealed_copy))
     return {
         **outcome,
         **evaluation,
         "claimed_done": env.claimed_done,
         "sealed": env.info.sealed,
-        # Tool calls that reached for answers (removed task files, the gym's git history or public repo).
-        "ground_truth_suspects": ground_truth_suspects(ledger),
+        "ground_truth_suspects": found["attempted"],
+        "ground_truth_obtained": found["obtained"],
+        "contamination_tier": tier(found),
         "gym_run_id": env.info.run_id,
         "timings": {key: round(value, 3) for key, value in env.info.timings.items()},
     }
@@ -389,7 +399,7 @@ async def _run_one(
     meter: RunMeter | None = None,
 ) -> float:
     _install_trace_processors()
-    meter = meter or RunMeter(config.budget.run_ceiling_usd)
+    meter = meter or RunMeter(config.budget.run_ceiling_usd, basis=config.budget.ceiling_basis)
     spec = arm_spec(arm_name)
     checks, sampler, rate = effective_audit(
         arm_name,
@@ -408,6 +418,8 @@ async def _run_one(
     pin_guard = PinGuard()
     pin_token = current_pin_guard.set(pin_guard)
     meter_token = current_run_meter.set(meter)
+    # Every Runner.run of this run (harness_run_config) enforces limits.context with this trimmer.
+    trimmer_token = current_trimmer.set(ContextTrimmer(config.limits.context))
     try:
         prompt_file = prompt_path(config.prompts, arm_name)
         routing = model_config.routing
@@ -438,7 +450,12 @@ async def _run_one(
                 "judge_temperature": TEMPERATURE,
                 "max_steps": config.limits.max_steps,
                 "subagent_max_turns": subagent_turns(config),
+                "context_tokens": config.limits.context,
                 "run_ceiling_usd": meter.ceiling_usd,
+                "ceiling_basis": meter.basis,
+                "reference_endpoint": price.reference_endpoint,
+                "gym_network_internal": config.gym.network_internal if config.environment == "docker" else None,
+                "gym_hide_task_dir": config.gym.hide_task_dir if config.environment == "docker" else None,
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
         )
@@ -453,6 +470,21 @@ async def _run_one(
         judge = build_judge(config.judge_model, writer=writer)
 
         def build(*, toolset: Toolset, hooks: LedgerHooks, ledger: Ledger):
+            agent = _build_agent(toolset=toolset, hooks=hooks, ledger=ledger)
+            # run_start's prompt_sha256 is the arm's prompt file; a delegating arm's main agent also gets the
+            # sub-agents' tool list (A6), so the prompt actually sent is hashed here.
+            instructions = agent.instructions if isinstance(agent.instructions, str) else ""
+            writer.write(
+                {
+                    "type": "main_prompt",
+                    "arm": arm_name,
+                    "instructions_sha256": hashlib.sha256(instructions.encode("utf-8")).hexdigest(),
+                    "chars": len(instructions),
+                }
+            )
+            return agent
+
+        def _build_agent(*, toolset: Toolset, hooks: LedgerHooks, ledger: Ledger):
             return build_main_agent(
                 arm=spec,
                 task=task_name,
@@ -501,6 +533,7 @@ async def _run_one(
             cost += float(event.get("cost_usd") or 0)
         judge_cost = float(getattr(judge, "cost_usd", 0.0)) + judge_error_cost
         spend = sum(event_spend(event) for event in events)
+        reference_spend = sum(event_reference_spend(event) for event in events)
         writer.write(
             {
                 "type": "run_end",
@@ -519,6 +552,8 @@ async def _run_one(
                 "judge_cost_usd": judge_cost,
                 # What the cap counts for this run (event_spend), and the provider's own bill.
                 "spend_usd": spend,
+                # The same tokens at the price table's reference endpoint (what a reference ceiling counts).
+                "reference_spend_usd": reference_spend,
                 "provider_reported_cost_usd": reported,
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
@@ -529,6 +564,7 @@ async def _run_one(
         writer.write({"type": "run_error", "error_type": type(exc).__name__, "error": str(exc)[:2000]})
         raise
     finally:
+        current_trimmer.reset(trimmer_token)
         current_run_meter.reset(meter_token)
         current_pin_guard.reset(pin_token)
         current_writer.reset(token)
@@ -541,14 +577,17 @@ def final_verdict(outcome: dict[str, Any], *, ceiling_hit: bool = False) -> dict
     Pre-registered (owner decision 4, 2026-10-24): a run whose tool calls reached for
     ground truth (``ground_truth_suspects``: removed task files, the gym's git history,
     or its public repo) is ``contaminated`` and counts as a failure, whatever the
-    grader said. An ungraded run (``passed: null``) stays ungraded.
+    grader said. An ungraded run (``passed: null``) stays ungraded. From 2026-10-25 the
+    detector has two tiers (``env.contamination``): ``ground_truth_suspects`` is the
+    attempted tier and ``ground_truth_obtained`` the obtained tier; either makes the run
+    contaminated, and ``contamination_tier`` says which.
 
     Owner decision 5: a run in which any model call was refused at the per-run cost
     ceiling has status ``cost_ceiling`` and counts as failed, even if the main agent
     went on to finish (a sub-agent or judge call was cut short).
     """
     eval_passed = outcome.get("passed")
-    contaminated = bool(outcome.get("ground_truth_suspects"))
+    contaminated = bool(outcome.get("ground_truth_suspects")) or bool(outcome.get("ground_truth_obtained"))
     passed = False if contaminated and eval_passed is not None else eval_passed
     verdict: dict[str, Any] = {"eval_passed": eval_passed, "contaminated": contaminated, "passed": passed, "cost_ceiling": ceiling_hit}
     if ceiling_hit:
@@ -588,7 +627,21 @@ async def run_experiment(
         resolve_api_key(models[config.judge_model])
     if config.environment == "docker":
         DockerIsolation(_gym_images(config)).up()
+        if config.gym.network_internal or config.gym.hide_task_dir:
+            from evcarry.env.gym_docker import require_offline_overlay
+
+            require_offline_overlay(_gym_images(config))
     price = model_config.price_table()
+    if config.budget.ceiling_basis == "reference" and price.reference_rates() is None:
+        raise ValueError(f"budget.ceiling_basis is reference, but {model_config.prices} names no reference_endpoint")
+    if config.budget.ceiling_basis == "reference" and config.budget.reserve_billed_per_reference < price.billed_per_reference_bound():
+        # The cap stays hard per call (admit checks it), but a run served mostly from InferenceNet's cache can bill
+        # more than its reserve before its reference spend reaches the ceiling.
+        print(
+            f"note: reserve_billed_per_reference {config.budget.reserve_billed_per_reference} is below the price table's "
+            f"worst component ratio {price.billed_per_reference_bound():.2f}; the pilot's InferenceNet-only token mix was 1.53.",
+            file=sys.stderr,
+        )
     destination = out_dir or resolve_repo_path(config.out)
     destination.mkdir(parents=True, exist_ok=True)
     guard = BudgetGuard(
@@ -597,6 +650,7 @@ async def run_experiment(
         price=price,
         spent_usd=logged_spend(destination),
         run_ceiling_usd=config.budget.run_ceiling_usd,
+        reserve_billed_per_reference=config.budget.reserve_billed_per_reference,
     )
     written: list[Path] = []
     pending = []
@@ -609,7 +663,7 @@ async def run_experiment(
     def _admit() -> RunMeter:
         """Check the cap and the schedule, then count the new run as in flight (no await in between)."""
         guard.check(billable=billable, now=datetime.now(timezone.utc))
-        meter = RunMeter(config.budget.run_ceiling_usd, guard if billable else None)
+        meter = RunMeter(config.budget.run_ceiling_usd, guard if billable else None, basis=config.budget.ceiling_basis)
         guard.open(meter)
         return meter
 

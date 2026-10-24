@@ -17,6 +17,12 @@ plus ``RESERVE_FACTOR`` times the ceiling for it and for every run in flight
 (less what each has spent), stays within the cap. If the cap is still reached
 mid-run, every later model call is refused with ``SpendCapExceeded``; that run
 gets no ``run_end`` (a restart runs it again) and the grid stops.
+
+Reference ceiling (2026-10-25, P2-1): with ``ceiling_basis: reference`` the ceiling
+counts each call's ``reference_cost_usd`` (its tokens at DeepInfra fp8 rates,
+whichever endpoint served it), so every arm and provider mix has the same token
+budget. The cap still counts billed dollars, so the per-run reserve is
+``RESERVE_FACTOR x ceiling x reserve_billed_per_reference`` billed dollars.
 """
 
 from __future__ import annotations
@@ -69,24 +75,45 @@ def event_spend(event: dict[str, Any]) -> float:
     return max(table, float(reported)) if isinstance(reported, (int, float)) else table
 
 
+def event_reference_spend(event: dict[str, Any]) -> float:
+    """What one trace event counts toward a reference-priced ceiling (its billed spend when it has no reference cost)."""
+    if event.get("type") not in _SPEND_EVENTS:
+        return 0.0
+    reference = event.get("reference_cost_usd")
+    if isinstance(reference, (int, float)) and not isinstance(reference, bool):
+        return float(reference)
+    return event_spend(event)
+
+
 class RunMeter:
     """Live spend of one run; ``admit`` runs before each of its model calls."""
 
-    def __init__(self, ceiling_usd: float | None = None, guard: BudgetGuard | None = None) -> None:
+    def __init__(self, ceiling_usd: float | None = None, guard: BudgetGuard | None = None, basis: str = "billed") -> None:
+        if basis not in ("billed", "reference"):
+            raise ValueError(f"unknown ceiling basis {basis}")
         self.ceiling_usd = ceiling_usd
         # Set for billable runs only: the experiment cap is checked at each call too.
         self.guard = guard
+        self.basis = basis
         self.spent_usd = 0.0
+        self.reference_usd = 0.0
         self.refusal: BudgetError | None = None
 
     def observe(self, event: dict[str, Any]) -> None:
         self.spent_usd += event_spend(event)
+        self.reference_usd += event_reference_spend(event)
+
+    @property
+    def ceiling_spend_usd(self) -> float:
+        """What the ceiling counts: billed dollars, or the same tokens at the reference endpoint's rates."""
+        return self.reference_usd if self.basis == "reference" else self.spent_usd
 
     def admit(self) -> None:
         if self.refusal is None:
-            if self.ceiling_usd is not None and self.spent_usd >= self.ceiling_usd:
+            if self.ceiling_usd is not None and self.ceiling_spend_usd >= self.ceiling_usd:
                 self.refusal = CostCeilingExceeded(
-                    f"run stopped at its cost ceiling: spent ${self.spent_usd:.6f} of ${self.ceiling_usd:.2f}"
+                    f"run stopped at its cost ceiling: spent ${self.ceiling_spend_usd:.6f} ({self.basis}) "
+                    f"of ${self.ceiling_usd:.2f}"
                 )
             elif self.guard is not None and self.guard.cap_reached():
                 self.refusal = SpendCapExceeded(
@@ -124,6 +151,8 @@ class BudgetGuard:
     spent_usd: float = 0.0
     run_ceiling_usd: float | None = None
     live: list[RunMeter] = field(default_factory=list)
+    # Billed dollars per ceiling dollar: 1.0 for a billed ceiling; the worst endpoint's ratio for a reference ceiling.
+    reserve_billed_per_reference: float = 1.0
 
     def total_usd(self) -> float:
         return self.spent_usd + sum(meter.spent_usd for meter in self.live)
@@ -132,7 +161,10 @@ class BudgetGuard:
         return self.cap_usd is not None and self.total_usd() >= self.cap_usd
 
     def reserve_usd(self) -> float:
-        return RESERVE_FACTOR * self.run_ceiling_usd if self.run_ceiling_usd is not None else 0.0
+        """Billed dollars held back for one run in flight."""
+        if self.run_ceiling_usd is None:
+            return 0.0
+        return RESERVE_FACTOR * self.run_ceiling_usd * self.reserve_billed_per_reference
 
     def check(self, *, billable: bool, now: datetime) -> None:
         from evcarry.providers.usage import is_peak

@@ -27,9 +27,15 @@ def harness_run_config() -> RunConfig:
 
     The run-level ``model_settings`` overrides each agent's, so a ``Runner.run``
     on an agent built without ``agent_model_settings()`` still sends ``TEMPERATURE``.
+
+    Inside a run (``runs.manager`` sets ``harness.context.current_trimmer``) every
+    ``Runner.run`` enforces the configured context window with that run's trimmer.
     """
+    from evcarry.harness.context import current_trimmer
+
     return RunConfig(
         tracing_disabled=True,
         tool_not_found_behavior="return_error_to_model",
         model_settings=agent_model_settings(),
+        call_model_input_filter=current_trimmer.get(),
     )

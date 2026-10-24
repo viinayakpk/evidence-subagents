@@ -28,6 +28,13 @@ class BudgetConfig(_Strict):
     cap_usd: float | None = None
     # Per-run spend (agent and judge calls) at which the run's next model call is refused: status cost_ceiling.
     run_ceiling_usd: float | None = None
+    # What the ceiling counts. "billed": the dollars billed. "reference" (P2-1, 2026-10-25): every call's tokens
+    # priced at the price table's reference endpoint (DeepInfra fp8), whichever endpoint served it, so every arm
+    # and every provider mix gets the same token budget. The experiment cap always counts billed dollars.
+    ceiling_basis: Literal["billed", "reference"] = "billed"
+    # Billed dollars a run may spend per reference dollar, for the cap's per-run reserve
+    # (reserve = 1.2 x ceiling x this). 1.0 for a billed ceiling.
+    reserve_billed_per_reference: float = 1.0
     # Anything but offpeak_only skips the peak-window refusal, so a typo must not pass.
     schedule: Literal["any", "offpeak_only"] = "any"
 
@@ -38,6 +45,8 @@ class LimitsConfig(_Strict):
     # Turns per sub-agent run (each main-agent call, repair or re-delegation); None means max_steps.
     subagent_max_turns: int | None = None
     max_seconds: int = 120
+    # Context window in tokens, enforced on every model call of every agent (P3-2, 2026-10-25):
+    # older tool outputs are replaced by a stub in blocks (harness.context).
     context: int = 32000
 
 
@@ -67,6 +76,13 @@ class GymConfig(_Strict):
     setup_timeout_s: int = 300
     eval_timeout_s: int = 600
     export_workspace: bool = True
+    # P2-2 (2026-10-25). The run's Docker network is created --internal: the agent container reaches its own
+    # Postgres and nothing else (no internet). Needs the gym images rebuilt after the overlay change that bakes
+    # every uv server's environment (make gym-images); the old images rebuild some at start from PyPI.
+    network_internal: bool = False
+    # P2-2. After the MCP servers start, the task's local mock web roots move out of /workspace/tasks, and
+    # /workspace keeps only what the agent and the servers need; the task directory is restored before grading.
+    hide_task_dir: bool = False
 
 
 class ExperimentConfig(_Strict):

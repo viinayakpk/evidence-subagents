@@ -11,6 +11,11 @@ so such a provider is priced at the larger rate of each component; a provider
 that is not in the table, or not observed, at the larger rate of each component
 over the whole table. The cost a call counts is the larger of that price and
 OpenRouter's own ``usage.cost`` (``call_cost``), so it is never below the bill.
+
+A table may name a ``reference_endpoint`` (2026-10-25, P2-1). Every call then also
+gets ``reference_cost_usd``: its tokens at that endpoint's rates, whichever endpoint
+served it. The per-run cost ceiling can count that figure, so every arm gets the
+same token budget whatever the provider mix; the cap keeps counting the bill.
 """
 
 from __future__ import annotations
@@ -84,6 +89,8 @@ class PriceTable:
     currency: str = "USD"
     # One row per OpenRouter endpoint tag (``deepinfra/fp8``); empty for a single-endpoint table.
     endpoints: tuple[tuple[str, Rates], ...] = ()
+    # The endpoint tag whose rates price ``reference_cost_usd`` (None: the call's own price-table cost).
+    reference_endpoint: str | None = None
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> PriceTable:
@@ -96,6 +103,9 @@ class PriceTable:
         raw_windows = data["peak_windows_utc"] if data.get("peak_windows_utc") is not None else [["01:00", "04:00"], ["06:00", "10:00"]]
         for start, end in raw_windows:
             windows.append((_parse_hhmm(start), _parse_hhmm(end)))
+        reference = data.get("reference_endpoint")
+        if reference is not None and str(reference) not in {tag for tag, _ in endpoints}:
+            raise ValueError(f"reference_endpoint {reference} is not one of the table's endpoints")
         return cls(
             input_cache_miss=top.input_cache_miss,
             input_cache_hit=top.input_cache_hit,
@@ -105,10 +115,31 @@ class PriceTable:
             weekdays_only=bool(data.get("weekdays_only", True)),
             currency=str(data.get("currency", "USD")),
             endpoints=endpoints,
+            reference_endpoint=str(reference) if reference is not None else None,
         )
 
     def worst_rates(self) -> Rates:
         return Rates(self.input_cache_miss, self.input_cache_hit, self.output)
+
+    def reference_rates(self) -> Rates | None:
+        """The reference endpoint's rates, or None when the table names none."""
+        return next((row for tag, row in self.endpoints if tag == self.reference_endpoint), None)
+
+    def billed_per_reference_bound(self) -> float:
+        """The largest ratio of any endpoint's rate to the reference rate, component by component (1.0 without a reference)."""
+        reference = self.reference_rates()
+        if reference is None:
+            return 1.0
+        ratios = [1.0]
+        for _tag, row in self.endpoints:
+            for mine, base in (
+                (row.input_cache_miss, reference.input_cache_miss),
+                (row.input_cache_hit, reference.input_cache_hit),
+                (row.output, reference.output),
+            ):
+                if base > 0:
+                    ratios.append(mine / base)
+        return max(ratios)
 
     def rates_for(self, provider: str | None) -> tuple[Rates, str]:
         """Rates for a call served by ``provider`` (a response's provider name) and the row(s) they came from.
@@ -161,6 +192,8 @@ class CallCost:
     table_usd: float
     priced_as: str
     reported_usd: float | None
+    # The same tokens at the table's reference endpoint (None: no reference, the price-table cost is used).
+    reference_usd: float | None = None
 
     def fields(self) -> dict[str, object]:
         return {
@@ -168,6 +201,7 @@ class CallCost:
             "price_table_cost_usd": self.table_usd,
             "priced_as": self.priced_as,
             "provider_reported_cost_usd": self.reported_usd,
+            "reference_cost_usd": self.reference_usd if self.reference_usd is not None else self.table_usd,
         }
 
 
@@ -177,7 +211,9 @@ def call_cost(tokens: TokenUsage, price: PriceTable, at: datetime, provider: str
     rates, priced_as = price.rates_for(provider)
     table = rates.usd(tokens) * multiplier
     reported = tokens.provider_reported_cost_usd
-    return CallCost(max(table, reported) if reported is not None else table, table, priced_as, reported)
+    reference_rates = price.reference_rates()
+    reference = reference_rates.usd(tokens) * multiplier if reference_rates is not None else None
+    return CallCost(max(table, reported) if reported is not None else table, table, priced_as, reported, reference)
 
 
 def token_usage_from_body(body: dict[str, Any] | None) -> TokenUsage:

@@ -29,6 +29,8 @@ def write_index(run_dir: Path) -> Path:
                         "passed": event.get("passed"),
                         "eval_passed": event.get("eval_passed", event.get("passed")),
                         "contaminated": bool(event.get("contaminated", False)),
+                        # "none", "attempted" or "obtained" (env.contamination); None before 2026-10-25.
+                        "contamination_tier": event.get("contamination_tier"),
                         "cost_ceiling": bool(event.get("cost_ceiling", False)),
                         "status": event.get("status"),
                         "agent_status": event.get("agent_status"),
@@ -37,6 +39,7 @@ def write_index(run_dir: Path) -> Path:
                         "cost_usd": event.get("cost_usd"),
                         "judge_cost_usd": event.get("judge_cost_usd"),
                         "spend_usd": event.get("spend_usd"),
+                        "reference_spend_usd": event.get("reference_spend_usd"),
                     }
                 )
     if not rows:
@@ -49,6 +52,7 @@ def write_index(run_dir: Path) -> Path:
                 "passed": pa.array([], type=pa.bool_()),
                 "eval_passed": pa.array([], type=pa.bool_()),
                 "contaminated": pa.array([], type=pa.bool_()),
+                "contamination_tier": pa.array([], type=pa.string()),
                 "cost_ceiling": pa.array([], type=pa.bool_()),
                 "status": pa.array([], type=pa.string()),
                 "agent_status": pa.array([], type=pa.string()),
@@ -57,6 +61,7 @@ def write_index(run_dir: Path) -> Path:
                 "cost_usd": pa.array([], type=pa.float64()),
                 "judge_cost_usd": pa.array([], type=pa.float64()),
                 "spend_usd": pa.array([], type=pa.float64()),
+                "reference_spend_usd": pa.array([], type=pa.float64()),
             }
         )
     else:

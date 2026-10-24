@@ -11,9 +11,18 @@ from pathlib import Path
 
 import pytest
 
-from evcarry.env.gym_docker import GymImages, GymTaskEnv, leftover_resources, preflight
+from evcarry.env.gym_docker import (
+    HIDE_KEEP,
+    GymImages,
+    GymTaskEnv,
+    leftover_resources,
+    load_server_specs,
+    preflight,
+    require_offline_overlay,
+)
 from evcarry.env.isolation import DockerIsolation, EnvironmentUnavailable
-from evcarry.env.toolathlon import gym_task_root, load_task
+from evcarry.env.toolathlon import gym_task_root, load_task, load_task_list
+from evcarry.paths import repo_root
 from evcarry.protocol.replayer import render_tool_result
 from evcarry.runs.config import InjectConfig, load_experiment
 from evcarry.runs.manager import _gym_images, run_experiment
@@ -32,6 +41,21 @@ def _gym_unavailable() -> str | None:
 
 _REASON = _gym_unavailable()
 pytestmark = [pytest.mark.docker_gym, pytest.mark.skipif(_REASON is not None, reason=f"gym Docker environment: {_REASON}")]
+
+
+def _overlay_missing() -> str | None:
+    """The offline tests need images built after the offline overlay; a pilot-era image has the same tag."""
+    if _REASON is not None:
+        return _REASON
+    try:
+        require_offline_overlay(GymImages.default())
+    except EnvironmentUnavailable as exc:
+        return str(exc)
+    return None
+
+
+_NO_OVERLAY = _overlay_missing()
+needs_offline_overlay = pytest.mark.skipif(_NO_OVERLAY is not None, reason=f"offline overlay: {_NO_OVERLAY}")
 
 
 def _names(events: list[dict]) -> set[str]:
@@ -115,7 +139,7 @@ async def test_injected_fault_on_real_output_is_sent_back_once(tmp_path: Path) -
     assert [event["kind"] for event in events if event["type"] == "injection"] == ["numeric_perturbation"]
     checks = [event for event in events if event["type"] == "check"]
     assert checks[0]["ok"] is False
-    assert any(f["reason"].startswith("L1: numeric value 718") for f in checks[0]["failures"])
+    assert any(f["reason"].startswith("L1: value 718") for f in checks[0]["failures"])
     assert [event["action"] for event in events if event["type"] == "policy"] == ["redelegate", "accept", "accept"]
     assert events[-1]["passed"] is True
 
@@ -202,3 +226,136 @@ async def test_the_agent_container_holds_no_answers_until_grading(tmp_path: Path
         assert "No such file" not in stderr and "ModuleNotFoundError" not in stderr
         back = await env._docker("exec", env.info.agent, "ls", f"/workspace/tasks/finalpool/{task.name}")
         assert "groundtruth_workspace" in back.stdout and "evaluation" in back.stdout
+
+
+# -- P2-2: network_internal and hide_task_dir (needs images built with overlay offline-v1) -----------
+
+
+def _subset70() -> list[str]:
+    try:
+        return load_task_list(repo_root() / "tasks" / "subset70.txt")
+    except OSError:
+        return []
+
+
+def _preprocess_text(name: str) -> str:
+    try:
+        return (gym_task_root() / name / "preprocess" / "main.py").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _mock_web_tasks() -> list[str]:
+    """subset70 tasks whose preprocess starts a mock web server from the task directory (17 at gym ed735ba)."""
+    return [name for name in _subset70() if "http.server" in _preprocess_text(name)]
+
+
+def _server_cover() -> list[str]:
+    """subset70 tasks that together start every gym MCP server: greedy, ties broken by name, so it is fixed."""
+    try:
+        needs = {name: set(load_task(name, gym_task_root()).mcp_servers) for name in _subset70()}
+        missing = set(load_server_specs())
+    except OSError:
+        return []
+    cover: list[str] = []
+    while missing:
+        best = max(sorted(needs), key=lambda name: len(needs[name] & missing))
+        if not needs[best] & missing:
+            break
+        cover.append(best)
+        missing -= needs[best]
+    return cover
+
+
+def test_the_offline_checks_cover_what_they_claim() -> None:
+    assert len(_mock_web_tasks()) == 17
+    covered = set().union(*(load_task(name, gym_task_root()).mcp_servers for name in _server_cover()))
+    assert covered == set(load_server_specs())
+
+
+@needs_offline_overlay
+async def test_the_internal_network_has_no_route_out_but_reaches_postgres(tmp_path: Path) -> None:
+    task = load_task("wc-shipping-analysis", gym_task_root())
+    async with GymTaskEnv(task, log_dir=tmp_path, network_internal=True) as env:
+        agent = env.info.agent
+        # No DNS assertion: Docker engines before 26.0 still forward DNS from --internal networks.
+        # Connections fail either way, by name and by address.
+        by_name = await env._docker("exec", agent, "curl", "-sS", "-m", "5", "-o", "/dev/null", "https://github.com", check=False)
+        by_address = await env._docker("exec", agent, "curl", "-sS", "-m", "5", "-o", "/dev/null", "http://1.1.1.1", check=False)
+        assert by_name.returncode != 0 and by_address.returncode != 0
+        postgres = await env._docker(
+            "exec", agent, "pg_isready", "-h", env.info.postgres, "-U", "eigent", "-d", "toolathlon_gym", check=False
+        )
+        assert postgres.returncode == 0, postgres.stdout + postgres.stderr
+        out = await env.python_execute({"code": "print('offline ok')"})
+        assert "offline ok" in out and "Return code: 0" in out, out
+    assert env.info.as_dict()["network_internal"] is True
+
+
+@needs_offline_overlay
+@pytest.mark.parametrize("task_name", _server_cover())
+async def test_every_server_starts_offline_with_the_task_dir_hidden(tmp_path: Path, task_name: str) -> None:
+    task = load_task(task_name, gym_task_root())
+    async with GymTaskEnv(task, log_dir=tmp_path, network_internal=True, hide_task_dir=True) as env:
+        assert set(env.info.servers) == set(task.mcp_servers)
+        assert env.info.hidden is not None and env.info.hidden["complete"] is True
+        out = await env.python_execute({"code": "import os; print(sorted(os.listdir('/workspace')))"})
+        assert "Return code: 0" in out and str(sorted(HIDE_KEEP)) in out, out
+    for log in sorted(tmp_path.glob("mcp_*.log")):
+        text = log.read_text(encoding="utf-8", errors="replace")
+        assert "Creating virtual environment" not in text and "Downloading" not in text, (log.name, text[-500:])
+
+
+@needs_offline_overlay
+@pytest.mark.parametrize("task_name", _mock_web_tasks())
+async def test_hidden_task_dir_keeps_the_mock_sites_and_grading(tmp_path: Path, task_name: str) -> None:
+    task = load_task(task_name, gym_task_root())
+    async with GymTaskEnv(task, log_dir=tmp_path, network_internal=True, hide_task_dir=True) as env:
+        agent = env.info.agent
+        hidden = env.info.hidden
+        assert hidden is not None and hidden["complete"] is True and hidden["mock_servers"], hidden
+        look = await env._docker("exec", agent, "bash", "-c", "ls -A /workspace; ls /srv/evcarry_mock")
+        assert "tasks" not in look.stdout.split() and "utils" not in look.stdout.split()
+        for server in hidden["mock_servers"]:
+            assert server["after"] == server["before"], server
+            assert 200 <= server["before"][0][0] < 400, server  # "/" answered
+            # Still answering after the `docker exec` that restarted it has ended.
+            for path, (status, _digest) in zip(server["paths"], server["before"], strict=True):
+                if status == 0:
+                    continue
+                code = await env._docker(
+                    "exec", agent, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                    f"http://localhost:{server['port']}{path}", check=False,
+                )
+                assert code.stdout.strip() == str(status), (server["port"], path, code.stdout)
+        # Through the agent's own tools too (the browser must also launch with no route out).
+        site = f"http://localhost:{hidden['mock_servers'][0]['port']}/"
+        if "fetch" in task.mcp_servers:
+            fetched = render_tool_result(await env.call_tool("fetch-fetch_html", {"url": site}))
+            assert "Failed to fetch" not in fetched, fetched[:500]
+        if "playwright_with_chunk" in task.mcp_servers:
+            page = render_tool_result(await env.call_tool("playwright_with_chunk-browser_navigate", {"url": site}))
+            assert not any(sign in page for sign in ("Executable doesn't exist", "browserType.launch", "net::ERR_")), page[:800]
+        env.claimed_done = True
+        result = await env.evaluate()  # the agent did nothing, so it fails, but it runs with its files back
+        assert result["eval_ran"] is True
+        output = result["eval"]["stdout_tail"] + result["eval"]["stderr_tail"]
+        assert "ModuleNotFoundError" not in output and "No module named" not in output, output[-800:]
+        back = await env._docker("exec", agent, "bash", "-c", f"ls {env.task_dir}; ls /workspace/utils")
+        assert "evaluation" in back.stdout.split() and "__init__.py" in back.stdout.split(), back.stdout
+
+
+@needs_offline_overlay
+async def test_hidden_workspace_holds_only_what_python_execute_needs(tmp_path: Path) -> None:
+    task = load_task("sf-hr-rating-distribution", gym_task_root())
+    async with GymTaskEnv(task, log_dir=tmp_path / "logs", network_internal=True, hide_task_dir=True) as env:
+        out = await env.python_execute(
+            {"code": "import os; print(sorted(os.listdir('/workspace')), os.path.exists('/workspace/tasks'))"}
+        )
+        assert f"{sorted(HIDE_KEEP)} False" in out, out
+        assert (env.sealed_copy / "evaluation" / "main.py").is_file() and (env.hidden_utils_copy / "__init__.py").is_file()
+        env.claimed_done = True
+        result = await env.evaluate()
+        assert result["eval_ran"] is True and result["passed"] is False
+        output = result["eval"]["stderr_tail"] + result["eval"]["stdout_tail"]
+        assert "No such file" not in output and "ModuleNotFoundError" not in output, output[-800:]

@@ -155,10 +155,16 @@ async def test_turn_limits_reach_the_sub_agents(tmp_path: Path, monkeypatch) -> 
     start = read_events(next(tmp_path.glob("*.jsonl")))[0]
     assert seen == {"subagent_max_turns": 7}
     assert (start["max_steps"], start["subagent_max_turns"]) == (12, 7)
-    for name in ("pilot_deepseek", "headline_deepseek"):
+    # The pilot ran with 40 turns and a billed $0.25 ceiling; from 2026-10-25 (P2-1) the headline and the dev runs
+    # give every agent 100 turns and every arm one ceiling priced at DeepInfra fp8 rates.
+    pilot = load_experiment("configs/experiments/pilot_deepseek.yaml")
+    assert pilot.limits.max_steps == 40 and pilot.limits.subagent_max_turns == 40
+    assert (pilot.budget.run_ceiling_usd, pilot.budget.ceiling_basis) == (0.25, "billed")
+    for name in ("headline_deepseek", "dev_verify"):
         paid = load_experiment(f"configs/experiments/{name}.yaml")
-        assert paid.limits.max_steps == 40 and paid.limits.subagent_max_turns == 40
-        assert paid.budget.run_ceiling_usd == 0.25
+        assert paid.limits.max_steps == 100 and paid.limits.subagent_max_turns == 100, name
+        assert (paid.budget.run_ceiling_usd, paid.budget.ceiling_basis) == (0.17, "reference"), name
+        assert paid.budget.reserve_billed_per_reference == 1.6 and paid.limits.context == 131072, name
     # Pilot: the owner's $5 budget, run with the stop rule "no run may take spend past $4.50".
     assert load_experiment("configs/experiments/pilot_deepseek.yaml").budget.cap_usd == 4.5
     assert load_experiment("configs/experiments/headline_deepseek.yaml").budget.cap_usd == 45

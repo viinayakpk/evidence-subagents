@@ -9,6 +9,7 @@ from typing import Any
 
 from agents import RunHooks
 
+from evcarry.harness.context import current_trimmer
 from evcarry.harness.tools import meta_for
 from evcarry.ledger.ledger import Ledger
 from evcarry.providers.usage import PriceTable, is_peak
@@ -46,6 +47,9 @@ class LedgerHooks(RunHooks):
         record = take() if take else None
         if record is None:
             return
+        trimmer = current_trimmer.get()
+        if trimmer is not None:
+            trimmer.calibrate(agent, record.usage.input_tokens)
         now = datetime.now(timezone.utc)
         system = record.system_instructions or ""
         self.writer.write(

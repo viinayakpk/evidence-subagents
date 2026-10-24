@@ -15,6 +15,21 @@ scripts, run inside the agent container the way the gym's TaskAgent and
 TaskEvaluator run them. Containers and the network carry the label
 ``evcarry.project=evidence-subagents`` and are removed on exit;
 ``evcarry gym clean`` removes leftovers after a crash.
+
+Two opt-in settings (P2-2 in docs/PILOT_DIAGNOSIS.md), both off by default; with
+both off a run issues exactly the docker commands it did before they existed.
+
+- ``network_internal``: the run's network is created ``--internal``, so the agent
+  container reaches its own Postgres and nothing else. The MCP servers still talk
+  to this process over ``docker exec`` stdio, and the tasks' mock web servers
+  listen on the container's own loopback. Needs images built from the current
+  ``docker/gym/overlay.Dockerfile`` (label ``evcarry.overlay=offline-v1``): older
+  images rebuild six Python servers' environments from PyPI at every start.
+- ``hide_task_dir``: after the MCP servers start, every ``python -m http.server``
+  that preprocess started from the gym tree (the task's mock web sites, served from
+  ``<task>/tmp`` or ``<task>/files``) is copied to ``/srv/evcarry_mock/<port>`` and
+  restarted on the same port, checked before and after; then ``/workspace`` keeps
+  only ``HIDE_KEEP``. Grading puts the task directory and ``utils`` back first.
 """
 
 from __future__ import annotations
@@ -23,6 +38,8 @@ import asyncio
 import json
 import logging
 import os
+import posixpath
+import re
 import shlex
 import shutil
 import subprocess
@@ -64,6 +81,14 @@ RUN_DIR = "/workspace/evcarry_run"
 PYTHON_BIN = "/opt/venv/bin/python3"
 LOCAL_SERVERS = "/opt/local_servers"
 PG_ENV = {"PGPORT": "5432", "PGUSER": "eigent", "PGPASSWORD": "camel", "PGDATABASE": "toolathlon_gym"}
+# hide_task_dir: what stays under /workspace while the agent runs. python_execute runs
+# `uv run --directory /workspace/agent_workspace`, which finds the gym's project file (a virtual
+# project: no build system, no path sources) and its environment one level up; RUN_DIR holds the
+# eval result. No running server reads anything else there: their YAMLs resolve to
+# /opt/local_servers and the workspace, and the emails server reads ${task_dir}/email_config.json
+# only at start.
+HIDE_KEEP = ("agent_workspace", "evcarry_run", "pyproject.toml", "uv.lock", ".venv")
+MOCK_ROOT = "/srv/evcarry_mock"  # moved mock web roots: <MOCK_ROOT>/<port>, log in <MOCK_ROOT>/<port>.log
 # The gym's tool_servers.py copies these libpq names onto the PG_* names its servers read.
 _PG_BRIDGE = (
     ("PG_HOST", "PGHOST"),
@@ -115,6 +140,29 @@ def preflight(images: GymImages) -> str:
             "(scripts/build_gym_images.sh, about 5 minutes)."
         )
     return docker
+
+
+OFFLINE_OVERLAY = "offline-v1"
+
+
+def require_offline_overlay(images: GymImages) -> None:
+    """Refuse an agent image built before the offline overlay (label ``evcarry.overlay``).
+
+    The image tag is keyed on the gym commit, so a pilot-era image has the same tag. On it
+    six uv servers rebuild their environment from PyPI at start, which ``network_internal``
+    blocks, so every run would end ``env_error``. Run ``make gym-images`` first.
+    """
+    docker = preflight(images)
+    found = subprocess.run(
+        [docker, "image", "inspect", "--format", '{{index .Config.Labels "evcarry.overlay"}}', images.agent],
+        capture_output=True, text=True, check=False,
+    )
+    label = found.stdout.strip() if found.returncode == 0 else ""
+    if label != OFFLINE_OVERLAY:
+        raise EnvironmentUnavailable(
+            f"{images.agent} has evcarry.overlay={label or '<none>'}, not {OFFLINE_OVERLAY}: it predates the offline overlay. "
+            "network_internal and hide_task_dir need the rebuilt images (make gym-images)."
+        )
 
 
 @dataclass(frozen=True)
@@ -305,6 +353,9 @@ class GymRunInfo:
     preprocess: dict[str, Any] | None = None
     servers: dict[str, dict[str, Any]] = field(default_factory=dict)
     sealed: bool = False
+    network_internal: bool = False
+    # hide_task_dir: mock servers moved or left, /workspace entries deleted and kept, host copies.
+    hidden: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -319,6 +370,8 @@ class GymRunInfo:
             "preprocess": self.preprocess,
             "servers": self.servers,
             "sealed": self.sealed,
+            "network_internal": self.network_internal,
+            "hidden": self.hidden,
         }
 
 
@@ -337,9 +390,15 @@ class GymTaskEnv:
         setup_timeout: float = 300.0,
         eval_timeout: float = 600.0,
         seal: bool = True,
+        network_internal: bool = False,
+        hide_task_dir: bool = False,
     ) -> None:
+        if hide_task_dir and not seal:
+            raise ValueError("hide_task_dir needs seal=True: grading restores the task directory from the sealed copy")
         self.task = task
         self.seal = seal
+        self.network_internal = network_internal
+        self.hide_task_dir = hide_task_dir
         self.images = images or GymImages.default()
         self.policy = policy or GymToolPolicy.load()
         self.log_dir = log_dir
@@ -355,6 +414,7 @@ class GymTaskEnv:
             agent=f"evcarry-{run_id}-agent",
             launch_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S %A"),
             images=self.images,
+            network_internal=network_internal,
         )
         self.task_dir = f"{GYM_HOME}/tasks/finalpool/{task.name}"
         self.container_env = {
@@ -396,7 +456,8 @@ class GymTaskEnv:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         started = time.perf_counter()
         info = self.info
-        await self._docker("network", "create", *self._labels(), info.network)
+        internal = ["--internal"] if self.network_internal else []
+        await self._docker("network", "create", *internal, *self._labels(), info.network)
         await self._docker("run", "-d", "--name", info.postgres, "--network", info.network, *self._labels(), self.images.postgres)
         env_args = [item for key, value in self.container_env.items() for item in ("-e", f"{key}={value}")]
         await self._docker(
@@ -417,11 +478,23 @@ class GymTaskEnv:
         info.timings["mcp_connect_s"] = time.perf_counter() - mark
         if self.seal:
             await self._seal()
+        if self.hide_task_dir:
+            await self._hide()
         info.timings["setup_s"] = time.perf_counter() - started
 
     @property
     def sealed_copy(self) -> Path:
         return self.log_dir / "sealed_task"
+
+    @property
+    def hidden_utils_copy(self) -> Path:
+        """Host copy of the gym's ``utils``, kept like ``sealed_task`` and put back before grading.
+
+        35 graders put ``/workspace`` on ``sys.path`` and try ``utils.verify_v2`` (absent at gym ed735ba;
+        they fall back), and no grader imports anything else from the gym tree. Restoring ``utils``
+        keeps grading exactly as in the sealed-only setup.
+        """
+        return self.log_dir / "hidden_utils"
 
     async def _seal(self) -> None:
         """Remove the answers from the container before the agent starts.
@@ -451,11 +524,113 @@ class GymTaskEnv:
         self.info.timings["seal_s"] = time.perf_counter() - mark
 
     async def _unseal(self) -> None:
-        """Put this task's directory back exactly as it was after preprocess; agent edits there are discarded."""
+        """Put this task's directory back exactly as it was after preprocess; agent edits there are discarded.
+
+        After ``hide_task_dir`` the parent directories are gone too, and ``utils`` is put back from its host copy.
+        """
         if not self.info.sealed:
+            return
+        if self.info.hidden is not None:
+            parent = posixpath.dirname(self.task_dir)
+            await self._docker(
+                "exec", self.info.agent, "bash", "-c", f"rm -rf {self.task_dir} && mkdir -p {parent}", timeout=120
+            )
+            await self._docker("cp", f"{self.sealed_copy}/.", f"{self.info.agent}:{self.task_dir}", timeout=300)
+            await self._docker("cp", f"{self.hidden_utils_copy}/.", f"{self.info.agent}:{GYM_HOME}/utils", timeout=300)
             return
         await self._docker("exec", self.info.agent, "rm", "-rf", self.task_dir, timeout=120)
         await self._docker("cp", f"{self.sealed_copy}/.", f"{self.info.agent}:{self.task_dir}", timeout=300)
+
+    async def _hide(self) -> None:
+        """Leave the agent nothing under ``/workspace`` but ``HIDE_KEEP`` (``hide_task_dir``).
+
+        Runs after ``_seal``, with the MCP servers up and before the agent starts. Three steps:
+
+        1. Move the mock web sites. Preprocess starts ``python -m http.server`` serving
+           ``<task>/tmp/...`` or ``<task>/files/mock_pages`` (128 tasks; 39 of pool160), and that
+           server opens files per request. Each one under the gym tree is copied to
+           ``MOCK_ROOT/<port>`` and restarted on its port with the same arguments; ``/`` and every
+           localhost path the task text names on that port must answer, and answer the same
+           (status and body hash) before and after.
+        2. Copy ``utils`` to the host, then delete every other entry of ``/workspace``
+           (the task directory, ``utils``, ``configs``, ``db``, ``local_servers``, the gym's
+           ``README.md`` and a stray ``Weekly_Meal_Plan.xlsx`` among them).
+        3. Check that python_execute's ``uv run`` still finds its environment.
+
+        The agent's tools run as root, so this deletes rather than hides. Any failure raises
+        ``EnvironmentUnavailable``: the run is not started. ``info.hidden`` records each step.
+        """
+        mark = time.perf_counter()
+        record: dict[str, Any] = {"mock_root": MOCK_ROOT, "keep": list(HIDE_KEEP), "complete": False}
+        self.info.hidden = record
+        try:
+            await self._move_mock_servers(record)
+            await self._delete_gym_tree(record)
+            await self._check_python_execute(record)
+        except EnvironmentUnavailable:
+            raise
+        except Exception as exc:  # noqa: BLE001 - every setup failure means: do not start the run
+            raise EnvironmentUnavailable(f"hide_task_dir for {self.task.name} failed: {exc}"[:1000]) from exc
+        record["complete"] = True
+        self.info.timings["hide_s"] = time.perf_counter() - mark
+
+    async def _move_mock_servers(self, record: dict[str, Any]) -> None:
+        found = await self._docker("exec", self.info.agent, PYTHON_BIN, "-c", _FIND_HTTP_SERVERS, timeout=60)
+        plan, left = plan_mock_relocations(json.loads(found.stdout), task_text=self.task.task_text)
+        record["mock_servers"] = []
+        record["left_running"] = left
+        if not plan:
+            return
+        limit = 60 + sum(40 + 10 * len(item["paths"]) for item in plan)
+        moved = await self._docker(
+            "exec", "-i", self.info.agent, PYTHON_BIN, "-c", _MOVE_HTTP_SERVERS,
+            stdin=json.dumps(plan), timeout=limit, check=False,
+        )
+        try:
+            report = json.loads(moved.stdout)
+        except json.JSONDecodeError:
+            report = None
+        if isinstance(report, dict):
+            record["mock_servers"] = report.get("servers", [])
+        if moved.returncode != 0 or moved.timed_out or not isinstance(report, dict) or report.get("ok") is not True:
+            detail = json.dumps(record["mock_servers"])[-600:] if record["mock_servers"] else (moved.stdout + moved.stderr)[-600:]
+            raise EnvironmentUnavailable(
+                f"moving the mock web servers of {self.task.name} failed (exit {moved.returncode}): {detail}"
+            )
+
+    async def _delete_gym_tree(self, record: dict[str, Any]) -> None:
+        shutil.rmtree(self.hidden_utils_copy, ignore_errors=True)
+        await self._docker("cp", f"{self.info.agent}:{GYM_HOME}/utils", str(self.hidden_utils_copy), timeout=300)
+        record["saved_to_host"] = {"utils": str(self.hidden_utils_copy), "task_dir": str(self.sealed_copy)}
+        keep = " ".join(f"! -name {shlex.quote(name)}" for name in HIDE_KEEP)
+        script = (
+            f"ls -A {GYM_HOME} && echo {shlex.quote(_LISTING_MARK)} && "
+            f"find {GYM_HOME} -mindepth 1 -maxdepth 1 {keep} -exec rm -rf {{}} + && ls -A {GYM_HOME}"
+        )
+        listed = await self._docker("exec", self.info.agent, "bash", "-c", script, timeout=300)
+        before, marker, after = listed.stdout.partition(_LISTING_MARK)
+        if not marker:
+            raise EnvironmentUnavailable(f"could not list {GYM_HOME} around the deletion: {listed.stdout[-300:]}")
+        before_names, after_names = before.split(), after.split()
+        record["deleted"] = sorted(set(before_names) - set(after_names))
+        record["kept"] = sorted(after_names)
+        unexpected = sorted(set(after_names) - set(HIDE_KEEP))
+        if unexpected:
+            raise EnvironmentUnavailable(f"{GYM_HOME} still holds {unexpected} after the deletion")
+
+    async def _check_python_execute(self, record: dict[str, Any]) -> None:
+        probe = await self._docker(
+            "exec", "-w", WORKSPACE, self.info.agent, *_kill_after(120),
+            "uv", "run", "--directory", WORKSPACE, "python", "-c", "import sys; print(sys.prefix)",
+            timeout=150, check=False,
+        )
+        lines = probe.stdout.strip().splitlines()
+        record["python_execute_prefix"] = lines[-1] if lines else ""
+        if probe.returncode != 0 or record["python_execute_prefix"] != f"{GYM_HOME}/.venv":
+            raise EnvironmentUnavailable(
+                f"python_execute's `uv run` no longer finds {GYM_HOME}/.venv (exit {probe.returncode}): "
+                f"{(probe.stdout + probe.stderr)[-400:]}"
+            )
 
     async def _wait_for_postgres(self) -> None:
         deadline = time.monotonic() + self.setup_timeout
@@ -566,7 +741,18 @@ class GymTaskEnv:
             return f"Error calling {name}: {exc}"
 
     async def python_execute(self, arguments: dict[str, Any]) -> str:
-        """Same contract and output format as the gym's python_execute local tool."""
+        """Same contract and output format as the gym's python_execute local tool.
+
+        It runs as root in the agent container, as the gym's tool does; so does the gym's terminal
+        server, whose ``ALLOWED_DIR`` check is a string filter that ``..``, ``find`` or ``python -c``
+        get past. Running them as a non-root user is an owner decision and is not done here.
+        With ``hide_task_dir`` and ``network_internal`` both on, these root tools find nothing outside
+        the workspace but the image's own code and runtime (``/opt/local_servers``, ``/opt/venv``, uv's
+        interpreters, the kept ``/workspace/{pyproject.toml,uv.lock,.venv}``) and the moved mock sites
+        under ``MOCK_ROOT``, which the task's localhost URLs serve anyway; and they have no route out.
+        The container environment still carries the Postgres credentials, so direct SQL against the
+        run's own database (the one graders read) stays possible, in every arm alike.
+        """
         code = str(arguments.get("code", ""))
         try:
             timeout = min(max(int(arguments.get("timeout") or 30), 1), 120)
@@ -676,6 +862,224 @@ def _kill_after(seconds: int) -> list[str]:
     Killing the host's ``docker exec`` client would leave the process running in the container.
     """
     return ["timeout", "-s", "KILL", str(max(1, seconds))]
+
+
+# -- hide_task_dir: the tasks' mock web servers -------------------------------------------------
+
+_LISTING_MARK = "==evcarry-after-deletion=="
+MAX_PROBE_PATHS = 20  # per moved server: "/" plus the first localhost paths the task text names on its port
+_TASK_URL = re.compile(r"https?://(?:localhost|127\.0\.0\.1):(\d+)(/[^\s\"'<>`)\]]*)?")
+
+
+def task_url_paths(task_text: str) -> dict[int, list[str]]:
+    """Localhost paths per port named in the task text, in first-seen order (fragment and trailing punctuation dropped)."""
+    found: dict[int, list[str]] = {}
+    for match in _TASK_URL.finditer(task_text or ""):
+        path = (match.group(2) or "/").split("#", 1)[0].rstrip(".,;:!?") or "/"
+        paths = found.setdefault(int(match.group(1)), [])
+        if path not in paths:
+            paths.append(path)
+    return found
+
+
+def _http_server_args(argv: list[str]) -> tuple[int, int | None] | None:
+    """``(port, index of the --directory value or None)`` for a ``python -m http.server`` argv, else None.
+
+    Raises ValueError for an argv this cannot read, so the run stops instead of guessing.
+    """
+    try:
+        at = argv.index("http.server")
+    except ValueError:
+        return None
+    if at == 0 or argv[at - 1] != "-m":
+        return None
+    port, directory = 8000, None
+    index = at + 1
+    while index < len(argv):
+        token = argv[index]
+        if token in ("-d", "--directory"):
+            if index + 1 >= len(argv):
+                raise ValueError(f"{token} without a value in {argv}")
+            directory = index + 1
+            index += 2
+        elif token.startswith("--directory="):
+            directory = index
+            index += 1
+        elif token in ("-b", "--bind", "-p", "--protocol"):
+            index += 2
+        elif token.startswith("-"):  # --cgi, --bind=..., --protocol=...
+            index += 1
+        elif token.isdigit():
+            port = int(token)
+            index += 1
+        else:
+            raise ValueError(f"cannot read the http.server arguments {argv}")
+    return port, directory
+
+
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def plan_mock_relocations(
+    processes: list[dict[str, Any]],
+    *,
+    task_text: str,
+    gym_home: str = GYM_HOME,
+    keep_roots: tuple[str, ...] = (WORKSPACE, RUN_DIR),
+    target_root: str = MOCK_ROOT,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Which running ``http.server`` processes serve a directory that ``hide_task_dir`` deletes, and how to move each.
+
+    ``processes`` is ``_FIND_HTTP_SERVERS``'s output (``pid``, ``cwd``, ``argv`` of every process with an
+    ``http.server`` argument). The served root is ``--directory`` (relative to the process's cwd) or the
+    cwd itself (one task starts it with ``cwd=``). Returns ``(plan, left)``: per server to move, its pid,
+    port, source, target, log file, the argv to restart it with (``--directory`` pointed at the target;
+    the restart's cwd is the target too) and the paths to compare before and after; and the processes
+    left where they are. Raises ValueError for an argv it cannot read or two servers on one port.
+    """
+    urls = task_url_paths(task_text)
+    plan: list[dict[str, Any]] = []
+    left: list[dict[str, Any]] = []
+    for process in processes:
+        argv = [str(item) for item in process["argv"]]
+        pid, cwd = int(process["pid"]), str(process["cwd"])
+        parsed = _http_server_args(argv)
+        if parsed is None:
+            left.append({"pid": pid, "argv": argv, "reason": "not `python -m http.server`"})
+            continue
+        port, directory = parsed
+        if directory is None:
+            root = cwd
+        else:
+            value = argv[directory].split("=", 1)[1] if argv[directory].startswith("--directory=") else argv[directory]
+            root = value if posixpath.isabs(value) else posixpath.join(cwd, value)
+        root = posixpath.normpath(root)
+        if root == posixpath.normpath(gym_home):
+            raise ValueError(f"the http.server on port {port} serves all of {gym_home}")
+        if not _under(root, gym_home) or any(_under(root, keep) for keep in keep_roots):
+            left.append({"pid": pid, "port": port, "root": root, "reason": "its root is not deleted"})
+            continue
+        if any(item["port"] == port for item in plan):
+            raise ValueError(f"two http.server processes on port {port}")
+        target = f"{target_root}/{port}"
+        restart = list(argv)
+        if directory is not None:
+            restart[directory] = f"--directory={target}" if argv[directory].startswith("--directory=") else target
+        paths = ["/", *(path for path in urls.get(port, []) if path != "/")][:MAX_PROBE_PATHS]
+        plan.append(
+            {
+                "pid": pid,
+                "port": port,
+                "source": root,
+                "target": target,
+                "log": f"{target_root}/{port}.log",
+                "argv": restart,
+                "paths": paths,
+            }
+        )
+    return plan, left
+
+
+# Run in the agent container with PYTHON_BIN (Python 3.10). Prints a JSON list of the processes whose
+# argv has an "http.server" element; this script's own argv holds that text only inside one element.
+# Zombies (killed servers whose parent is PID 1 `sleep`) have an empty cmdline and no cwd.
+_FIND_HTTP_SERVERS = r"""
+import json, os
+found = []
+for pid in os.listdir("/proc"):
+    if not pid.isdigit():
+        continue
+    try:
+        with open("/proc/%s/cmdline" % pid, "rb") as handle:
+            raw = handle.read()
+        cwd = os.readlink("/proc/%s/cwd" % pid)
+    except OSError:
+        continue
+    argv = [part.decode("utf-8", "replace") for part in raw.split(b"\0")]
+    if argv and argv[-1] == "":
+        argv.pop()
+    if "http.server" in argv:
+        found.append({"pid": int(pid), "cwd": cwd, "argv": argv})
+print(json.dumps(found))
+"""
+
+# Run in the agent container with PYTHON_BIN; reads plan_mock_relocations' plan on stdin. Per server:
+# probe every path (status, sha256 of the body), copy the root, stop the old server, start the new one
+# detached (own session, output to its log, so it outlives this `docker exec` the way preprocess's
+# `nohup ... &` servers do), wait for the port, probe again. Stops at the first failure; exit 1 then.
+_MOVE_HTTP_SERVERS = r"""
+import hashlib, json, os, shutil, signal, socket, subprocess, sys, time, urllib.error, urllib.request
+
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # never a proxy, even if one is set
+
+def probe(port, path):
+    url = "http://127.0.0.1:%d%s" % (port, path)
+    try:
+        with OPENER.open(url, timeout=5) as response:
+            return [response.status, hashlib.sha256(response.read()).hexdigest()]
+    except urllib.error.HTTPError as error:
+        return [error.code, hashlib.sha256(error.read()).hexdigest()]
+    except Exception as error:
+        return [0, type(error).__name__]
+
+def listening(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+def wait(port, up, seconds):
+    deadline = time.monotonic() + seconds
+    while listening(port) != up:
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.1)
+    return True
+
+def move(item):
+    port, paths = item["port"], item["paths"]
+    entry = {key: item[key] for key in ("pid", "port", "source", "target", "paths")}
+    entry["before"] = [probe(port, path) for path in paths]
+    if entry["before"][0][0] == 0:
+        entry["error"] = "the server did not answer before the move"
+        return entry
+    os.makedirs(os.path.dirname(item["target"]), exist_ok=True)
+    shutil.copytree(item["source"], item["target"], ignore_dangling_symlinks=True)
+    os.kill(item["pid"], signal.SIGTERM)
+    if not wait(port, False, 10):
+        try:
+            os.kill(item["pid"], signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if not wait(port, False, 5):
+            entry["error"] = "the old server kept the port"
+            return entry
+    with open(item["log"], "ab") as log:
+        subprocess.Popen(
+            item["argv"], cwd=item["target"], stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+            start_new_session=True,
+        )
+    if not wait(port, True, 15):
+        entry["error"] = "the restarted server did not open the port"
+        return entry
+    entry["after"] = [probe(port, path) for path in paths]
+    if entry["after"] != entry["before"]:
+        entry["error"] = "the answers differ after the move"
+    return entry
+
+report = []
+for item in json.load(sys.stdin):
+    try:
+        entry = move(item)
+    except Exception as error:
+        entry = {"port": item.get("port"), "source": item.get("source"), "error": "%s: %s" % (type(error).__name__, error)}
+    report.append(entry)
+    if "error" in entry:
+        break
+ok = bool(report) and all("error" not in entry for entry in report)
+print(json.dumps({"ok": ok, "servers": report}))
+sys.exit(0 if ok else 1)
+"""
 
 
 def remove_run_resources(run_id: str, docker: str) -> None:

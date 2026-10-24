@@ -3,6 +3,9 @@ example_only: false
 peak_multiplier: 1
 weekdays_only: true
 peak_windows_utc: []
+# Every call also gets reference_cost_usd: its tokens at this endpoint's rates, whichever endpoint
+# served it. The per-run ceiling counts it when budget.ceiling_basis is reference (2026-10-25, P2-1).
+reference_endpoint: deepinfra/fp8
 # USD per million tokens, one row per endpoint tag in openrouter_ds_1017's routing.
 # A call is priced at the row of the provider that served it (both InferenceNet rows
 # answer "InferenceNet"); an unobserved or unknown provider at the larger rate of
