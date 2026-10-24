@@ -1,6 +1,7 @@
 # frozen stratified sample seed 20261024
 # subset 70 restratified from the pool
 # gym ed735ba0af71d82688a55f952a6ea11479ae7206
+# 7 email-defect tasks swapped by evcarry-task-rules-v1; see docs/TASK_RULES.md
 12306-howtocook-team-trip-catering-excel-gcal
 12306-yf-investor-roadshow-excel-ppt-email
 academic-conference-planning-coordination
@@ -8,7 +9,7 @@ academic-literature-review
 academic-presentation-builder
 arxiv-latex-reasoning-gsheet
 arxiv-lit-review-gsheet
-arxiv-reading-plan-excel-gcal-email
+arxiv-method-benchmark-tracker
 arxiv-research-pipeline-notion-excel
 arxiv-research-workflow-pipeline
 canvas-assignment-effectiveness-ppt-notion-email
@@ -16,7 +17,6 @@ canvas-course-comparison
 canvas-course-feedback
 canvas-exam-prep-scheduler
 canvas-module-completion-notion-gcal
-canvas-quiz-analysis-email
 canvas-quiz-analysis-ppt
 canvas-quiz-performance-gcal-gform
 ecommerce-market-benchmark
@@ -34,20 +34,21 @@ pw-sf-benchmark-excel-word-email
 pw-sf-support-sla-benchmark-excel-gcal
 pw-wc-customer-segment-gsheet-email
 sf-hr-attrition-gcal
-sf-hr-mentorship-excel-gcal-email
+sf-hr-compensation-pdf-notion
+sf-hr-department-budget
+sf-hr-performance-ppt
 sf-hr-salary-overview
 sf-quality-assurance-survey
 sf-salary-market-benchmark
 sf-sales-discount-gsheet-email
 sf-sales-product-category
 sf-sales-region-analysis-gsheet-email
-sf-sla-breach-audit
+sf-sales-regional-summary
 sf-support-agent-review
-sf-ticket-resolution-notion
 sf-wc-order-reconciliation-excel-word-email
 terminal-arxiv-latex-excel-word-notion
-terminal-canvas-gform-gcal-excel-email
 terminal-canvas-wc-excel-ppt-email
+terminal-howtocook-scholarly-excel-word-gform
 terminal-wc-pw-pricing-excel-word-gcal
 terminal-wc-sf-revenue-reconcile-excel-ppt
 terminal-wc-yf-ppt-notion-email
@@ -61,9 +62,9 @@ wc-shipping-analysis
 wc-shipping-tax-excel-word
 wc-shipping-zone-ppt
 wc-yf-commodity-pricing-impact
-yf-dividend-tracker-gsheet
 yf-earnings-calendar-alert
 yf-financial-health-excel-notion
+yf-financial-statements-overview
 yf-portfolio-gsheet-pdf-gcal-email
 yf-portfolio-risk-excel
 yf-sector-comparison-pdf

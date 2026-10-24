@@ -47,7 +47,7 @@ Exit codes from `evcarry run`: spend cap `2`, weekday peak window `3`, missing A
 
 Prices are dated files in `configs/prices/`. DeepSeek off-peak is $0.15 cache-miss / $0.003 cache-hit / $0.60 output per million tokens. Peak is double, on weekdays 01:00–04:00 and 06:00–10:00 UTC, end exclusive. Weekends are off-peak. After the 2026-10-25 DST change the Prague clock labels move; the UTC windows stay put. `offpeak_only` refuses a billable run that starts inside a peak window. Mock and other non-billable models skip both the window and the cap.
 
-Experiment files live in `configs/experiments/`. Paths are relative to the repo root. The frozen lists are `tasks/pool160.txt`, `tasks/subset70.txt`, and `tasks/pilot10.txt`, checked against `tasks/SHA256SUMS`.
+Experiment files live in `configs/experiments/`. Paths are relative to the repo root. The frozen lists are `tasks/pool160.txt`, `tasks/subset70.txt`, and `tasks/pilot10.txt`, checked against `tasks/SHA256SUMS`. Seven subset70 tasks (one of them in pilot10) whose email setup cannot pass were swapped for pool160 tasks by a fixed rule; `docs/TASK_RULES.md` has the rule, the swap list and the 128-tool probe result. `uv run python scripts/apply_task_rules.py --check` rebuilds the lists from the seed and the rules.
 
 ## OpenRouter
 
@@ -146,7 +146,7 @@ The system prompt is the frozen file under `prompts/v1/` and is the cache prefix
 3. L3 is the lexical judge unless `judge_model` names a model. The lexical judge requires hyphenated tokens, a non-numeric string value, and list items to appear in the evidence, so it does not catch an omitted list item. In the synthetic fault table the omission rows now start from a claim listing all five papers and drop one that the cited evidence still shows; the lexical judge misses both rows and the scripted judge (`make fault-judge`) catches both at L3, with no rejects on the two clean claims.
 4. Agents SDK 0.24 already runs function tools from one turn concurrently (`tool_execution.max_function_tool_concurrency`). No batch tool was added. The SDK 0.24 install also has no `agents.testing.ScriptedModel`; `FixtureModel` implements the public `Model` interface.
 5. Peak windows stay in UTC. The Prague display shifts on 2026-10-25; the UTC windows do not.
-6. `pool160`, `subset70`, and `pilot10` are an algorithmic stratified sample (seed `20261024`, largest remainder, then `random.Random(seed)` inside sorted stratum names). They are not hand-reviewed. Do not re-roll them; `scripts/freeze_task_lists.py` is only for a new gym commit.
+6. `pool160`, `subset70`, and `pilot10` are an algorithmic stratified sample (seed `20261024`, largest remainder, then `random.Random(seed)` inside sorted stratum names), with the email-defect swaps of `docs/TASK_RULES.md` applied to subset70 and pilot10. They are not hand-reviewed. Do not re-roll them; `scripts/freeze_task_lists.py` is only for a new gym commit.
 7. OpenRouter requests send `X-OpenRouter-Metadata: enabled`, and both `X-Title` and `X-OpenRouter-Title`.
 8. SDK `Usage` drops DeepSeek cache fields (`cached_tokens` stays 0). The raw HTTP body is the accounting source. `provider_data.model` is the requested model.
 9. Strict `output_type=SubagentReturn` works for valid JSON. Schema-invalid JSON fails inside the SDK before the extractor. The one-repair guarantee is `parse_subagent_return` and the string-mode extractor path.
@@ -161,7 +161,7 @@ The system prompt is the frozen file under `prompts/v1/` and is the cache prefix
 
 ## Open issues
 
-- See `docs/STATUS_gym_judge.md` for the gym findings that need a decision before paid runs: tasks whose SA agent gets more than 128 tools (28 of `subset70`, 3 of `pilot10`), gym tasks whose evaluation needs a sender address the email tool cannot set (`sf-sla-breach-audit` in `pilot10`), and email configs without a password (one task in `subset70`).
+- More than 128 tools: the pinned DeepInfra route accepted 150 (`docs/TASK_RULES.md`); no task was trimmed. Twelve subset70 tasks give the SA agent more than 150 tools, which is unverified.
 - The LLM judge has only been run against the scripted provider. Its omission catch rate on a real model is untested (`EVCARRY_LIVE_JUDGE=local_primary uv run pytest tests/integration/test_live_judge.py -s` once vLLM is up).
 - DeepSeek cache field names are the documented ones (`prompt_cache_hit_tokens`, `prompt_cache_miss_tokens`, plus the OpenAI details object). Confirm them on a real M4 response.
 - OpenRouter omits router metadata on some cache hits, so `served_provider` can be unobserved. The trace says so instead of inventing a provider.

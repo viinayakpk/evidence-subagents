@@ -1,0 +1,8 @@
+list,old,new,reason,tier,old_stratum,new_stratum,new_sa_tools,new_swap_key
+subset70,arxiv-reading-plan-excel-gcal-email,arxiv-method-benchmark-tracker,email_config_without_password,same stratum,arxiv|5,arxiv|5,84,4154c7c55a39cc23
+subset70,canvas-quiz-analysis-email,sf-hr-performance-ppt,unpassable_sender_check,same server count,canvas|4,sf|4,93,0ac58a3de13de11e
+subset70,sf-hr-mentorship-excel-gcal-email,sf-hr-department-budget,unpassable_sender_check,same stratum,sf|5,sf|5,100,527b97eaf506c499
+subset70+pilot10,sf-sla-breach-audit,sf-hr-compensation-pdf-notion,unpassable_sender_check,same stratum,sf|4,sf|4,59,0e0d8e541e215c38
+subset70,sf-ticket-resolution-notion,sf-sales-regional-summary,unpassable_sender_check,same stratum,sf|4,sf|4,75,52cf1e95fb1f34c2
+subset70,terminal-canvas-gform-gcal-excel-email,terminal-howtocook-scholarly-excel-word-gform,unpassable_sender_check,same stratum,terminal|7,terminal|7,110,a4578ceb43ff268f
+subset70,yf-dividend-tracker-gsheet,yf-financial-statements-overview,unpassable_sender_check,same stratum,yf|4,yf|4,61,175d55734a770edc
