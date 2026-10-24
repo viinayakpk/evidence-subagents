@@ -287,7 +287,9 @@ async def test_a_swallowed_provider_mismatch_still_fails_the_run(tmp_path: Path,
     with pytest.raises(ProviderMismatch, match="Novita"):
         await run_experiment(config, out_dir=tmp_path)
     (trace,) = tmp_path.glob("*.jsonl")
-    assert [event["type"] for event in read_events(trace)] == ["run_start"]
+    events = read_events(trace)
+    assert [event["type"] for event in events] == ["run_start", "run_error"]
+    assert events[-1]["error_type"] == "ProviderMismatch"
     assert current_pin_guard.get() is None  # the guard does not leak into the next run
 
 
@@ -302,3 +304,29 @@ def test_cli_exit_code_for_a_provider_mismatch(monkeypatch, capsys) -> None:
     with pytest.raises(SystemExit) as stopped:
         main(["run", "configs/experiments/mock_e2e.yaml"])
     assert stopped.value.code == 7 and "Novita" in capsys.readouterr().err
+
+
+async def test_a_failed_run_stops_new_runs_but_lets_paid_runs_finish(tmp_path: Path, monkeypatch) -> None:
+    """One provider error used to cancel every run in flight, losing work already paid for."""
+    import asyncio
+
+    from evcarry.runs import manager
+
+    original = manager._run_fixture
+    started = {"n": 0}
+
+    async def flaky(**kwargs):
+        started["n"] += 1
+        if started["n"] == 1:
+            await asyncio.sleep(0.3)  # still running when its sibling fails
+            return await original(**kwargs)
+        raise RuntimeError("provider returned 503 after retries")
+
+    monkeypatch.setattr(manager, "_run_fixture", flaky)
+    config = load_experiment("configs/experiments/mock_e2e.yaml")
+    config.parallel_tasks = 2
+    with pytest.raises(RuntimeError, match="503"):
+        await run_experiment(config, out_dir=tmp_path)
+    ends = {path.name: read_events(path)[-1]["type"] for path in tmp_path.glob("*.jsonl")}
+    assert sorted(ends.values()) == ["run_end", "run_error"]  # nothing new started after the failure
+    assert started["n"] == 2

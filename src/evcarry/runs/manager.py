@@ -493,6 +493,10 @@ async def _run_one(
             }
         )
         return spend
+    except Exception as exc:
+        # The run ends without run_end (a restart runs it again); say why in its trace.
+        writer.write({"type": "run_error", "error_type": type(exc).__name__, "error": str(exc)[:2000]})
+        raise
     finally:
         current_pin_guard.reset(pin_token)
         current_writer.reset(token)
@@ -575,11 +579,12 @@ async def run_experiment(
     else:
         semaphore = asyncio.Semaphore(config.parallel_tasks)
         refusals: list[BudgetError] = []
+        failures: list[Exception] = []
 
         async def _bounded(item: tuple[str, str, int, Path]) -> Path | None:
             task_name, arm_name, seed, path = item
             async with semaphore:
-                if refusals:
+                if refusals or failures:
                     return None
                 try:
                     guard.check(billable=billable, now=datetime.now(timezone.utc))
@@ -587,21 +592,31 @@ async def run_experiment(
                     # Start nothing new; runs already going (and paid for) finish.
                     refusals.append(exc)
                     return None
-                await _one(task_name, arm_name, seed)
+                try:
+                    await _one(task_name, arm_name, seed)
+                except Exception as exc:  # noqa: BLE001 - re-raised once the runs in flight are done
+                    # A failed run (provider error, provider mismatch, harness bug) stops new runs, but the
+                    # runs already going were paid for and finish. The failed run has no run_end, so a
+                    # restart runs it again; its spend is counted from its trace.
+                    failures.append(exc)
+                    return None
                 return path
 
         tasks = [asyncio.create_task(_bounded(item)) for item in pending]
         try:
             results = await asyncio.gather(*tasks)
         except BaseException:
-            # A run failed: stop the others and let their environments tear down before re-raising.
+            # Interrupted (Ctrl-C): stop the others and let their environments tear down before re-raising.
             for item in tasks:
                 item.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
         written = [path for path in results if path is not None]
-        if refusals:
+        if failures or refusals:
             write_index(destination)
+        if failures:
+            raise failures[0]
+        if refusals:
             raise refusals[0]
     if written or any(destination.glob("*.jsonl")):
         write_index(destination)
