@@ -7,7 +7,8 @@ on whatever the list files hold now. Then:
 1. swaps every subset70 task with an email defect for a pool160 task (rule in
    ``task_rules``), and gives pilot10 the same replacements;
 2. writes ``tasks/subset70.txt``, ``tasks/pilot10.txt``, ``tasks/SHA256SUMS``,
-   the swap table ``tasks/swaps.csv`` and the email audit ``tasks/email_audit.csv``;
+   the swap table ``tasks/swaps.csv``, the email audit ``tasks/email_audit.csv``
+   and the delegation labels ``tasks/delegation_labels.csv``;
 3. records the rule version and the pre-swap hashes in ``tasks/FROZEN.txt``.
 
 ``--check`` writes nothing and exits 1 if any output would change.
@@ -25,9 +26,12 @@ import sys
 from pathlib import Path
 
 from evcarry.env.task_rules import (
+    DELEGATION_MIN_SERVERS,
     RULES_VERSION,
+    TOOL_LIMIT,
     TaskFacts,
     apply_swaps,
+    needs_delegation,
     plan_swaps,
     swap_key,
     task_facts,
@@ -129,6 +133,19 @@ def outputs() -> tuple[dict[str, bytes], list]:
             [name, *membership[name], fact.email_sender or "", " ".join(fact.required_senders), fact.email_defect or ""]
             for name, fact in facts.items()
             if fact.uses_email
+        ],
+    )
+    files["tasks/delegation_labels.csv"] = _csv(
+        [
+            "task", "in_pool160", "in_subset70", "in_pilot10", "domain", "n_servers", "sa_tools",
+            f"servers_ge_{DELEGATION_MIN_SERVERS}", f"sa_tools_gt_{TOOL_LIMIT}", "needs_delegation",
+        ],
+        [
+            [
+                name, *membership[name], fact.domain, fact.n_servers, fact.sa_tools,
+                fact.n_servers >= DELEGATION_MIN_SERVERS, fact.sa_tools > TOOL_LIMIT, needs_delegation(fact),
+            ]
+            for name, fact in facts.items()
         ],
     )
     frozen = (ROOT / "tasks" / "FROZEN.txt").read_text(encoding="utf-8")

@@ -47,7 +47,7 @@ Exit codes from `evcarry run`: spend cap `2`, weekday peak window `3`, missing A
 
 Prices are dated files in `configs/prices/`. DeepSeek off-peak is $0.15 cache-miss / $0.003 cache-hit / $0.60 output per million tokens. Peak is double, on weekdays 01:00–04:00 and 06:00–10:00 UTC, end exclusive. Weekends are off-peak. After the 2026-10-25 DST change the Prague clock labels move; the UTC windows stay put. `offpeak_only` refuses a billable run that starts inside a peak window. Mock and other non-billable models skip both the window and the cap.
 
-Experiment files live in `configs/experiments/`. Paths are relative to the repo root. The frozen lists are `tasks/pool160.txt`, `tasks/subset70.txt`, and `tasks/pilot10.txt`, checked against `tasks/SHA256SUMS`. Seven subset70 tasks (one of them in pilot10) whose email setup cannot pass were swapped for pool160 tasks by a fixed rule; `docs/TASK_RULES.md` has the rule, the swap list and the 128-tool probe result. `uv run python scripts/apply_task_rules.py --check` rebuilds the lists from the seed and the rules.
+Experiment files live in `configs/experiments/`. Paths are relative to the repo root. The frozen lists are `tasks/pool160.txt`, `tasks/subset70.txt`, and `tasks/pilot10.txt`, checked against `tasks/SHA256SUMS`. Seven subset70 tasks (one of them in pilot10) whose email setup cannot pass were swapped for pool160 tasks by a fixed rule; `docs/TASK_RULES.md` has the rule, the swap list, the 128-tool probe result and the delegation label (`tasks/delegation_labels.csv`). `uv run python scripts/apply_task_rules.py --check` rebuilds the lists from the seed and the rules.
 
 ## OpenRouter
 

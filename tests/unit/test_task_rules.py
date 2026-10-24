@@ -12,6 +12,7 @@ from evcarry.env.task_rules import (
     UNPASSABLE_SENDER_CHECK,
     TaskFacts,
     email_sender,
+    needs_delegation,
     plan_swaps,
     required_senders,
     swap_key,
@@ -146,3 +147,16 @@ def test_swap_tiers_eligibility_and_hash_order() -> None:
     (swap,) = plan_swaps(["aa-old"], [name for name in pool if name in facts], facts)
     assert swap.tier == "same server count"
     assert swap.new == min(["bb-same-count-1", "bb-same-count-2"], key=swap_key)
+
+
+def test_delegation_labels_file_matches_the_rule() -> None:
+    rows = list(csv.DictReader((ROOT / "tasks/delegation_labels.csv").open(encoding="utf-8")))
+    assert len(rows) == 503
+    for row in rows[::25]:
+        facts = task_facts(row["task"])
+        assert row["needs_delegation"] == str(needs_delegation(facts))
+        assert int(row["sa_tools"]) == facts.sa_tools
+    assert needs_delegation(_facts("x", "x", 6)) and needs_delegation(_facts("x", "x", 4, tools=129))
+    assert not needs_delegation(_facts("x", "x", 5, tools=128))
+    pool = [row for row in rows if row["in_pool160"] == "True"]
+    assert sum(row["needs_delegation"] == "True" for row in pool) == 103

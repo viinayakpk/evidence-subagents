@@ -1,4 +1,4 @@
-# Task rules: tool limit, email swaps
+# Task rules: tool limit, email swaps, delegation labels
 
 Rule version `evcarry-task-rules-v1`. Written 2026-10-24, before any pilot or headline run; no task outcome from any model existed when these rules were fixed. The rules read only the gym's task files (commit `ed735ba`) and the MCP tool inventory of the built image (`tests/fixtures/gym/tool_inventory.json`). Code: `src/evcarry/env/task_rules.py`. Apply or check:
 
@@ -6,7 +6,7 @@ Rule version `evcarry-task-rules-v1`. Written 2026-10-24, before any pilot or he
 uv run python scripts/apply_task_rules.py --check   # exits 0 when the committed files are what the rules give
 ```
 
-The script regenerates the original stratified sample from seed `20261024` (`scripts/freeze_task_lists.py`), applies the rules, and writes `tasks/subset70.txt`, `tasks/pilot10.txt`, `tasks/SHA256SUMS`, `tasks/swaps.csv`, `tasks/email_audit.csv`, and the rule lines of `tasks/FROZEN.txt` (with the pre-swap hashes `0571b5ee…` for subset70 and `24721d50…` for pilot10). `tasks/pool160.txt` is unchanged; it is where replacements come from.
+The script regenerates the original stratified sample from seed `20261024` (`scripts/freeze_task_lists.py`), applies the rules, and writes `tasks/subset70.txt`, `tasks/pilot10.txt`, `tasks/SHA256SUMS`, `tasks/swaps.csv`, `tasks/email_audit.csv`, `tasks/delegation_labels.csv`, and the rule lines of `tasks/FROZEN.txt` (with the pre-swap hashes `0571b5ee…` for subset70 and `24721d50…` for pilot10). `tasks/pool160.txt` is unchanged; it is where replacements come from.
 
 ## 1. More than 128 tools: keep every task
 
@@ -70,6 +70,26 @@ A pilot10 task swapped out of subset70 gets the same replacement, so pilot10 sta
 `canvas-quiz-analysis-email` has no canvas replacement: every pool160 task outside subset70 that needs the canvas server gives the SA agent more than 128 tools, except `canvas-assignment-calendar`, which has its own sender defect. With the bound at 150 tools (the verified one) instead of 128, the rule would pick a canvas task; the 128 bound was set by the owner's instruction before the probe and is kept.
 
 New hashes (`tasks/SHA256SUMS`): subset70 `6c1960c1…`, pilot10 `828d4ea9…`; pool160 unchanged (`977eda0b…`).
+
+## 3. Needs delegation
+
+MS-Eval's delegation labels are not public. The label used here:
+
+> A task **needs delegation** when it needs at least 6 MCP servers, or when the single agent would get more than 128 tools.
+
+- 6 servers is one above the pool160 median (5). A task spanning that many systems has several separable sub-tasks (read from one system, write to others), which is the work a main agent hands to sub-agents.
+- 128 tools is the documented per-request function limit of the OpenAI and DeepSeek chat APIs; past it a single agent cannot hold the full tool set on those APIs.
+
+Both thresholds were chosen from task metadata only. The two parts are stored separately (`servers_ge_6`, `sa_tools_gt_128`) so an analysis can report each.
+
+| list | tasks | needs delegation | ≥ 6 servers | > 128 SA tools |
+| --- | --- | --- | --- | --- |
+| all gym tasks | 503 | 316 | 248 | 203 |
+| pool160 | 160 | 103 | 78 | 69 |
+| subset70 (after swaps) | 70 | 42 | 34 | 26 |
+| pilot10 (after swaps) | 10 | 5 | 2 | 3 |
+
+File: `tasks/delegation_labels.csv` (every gym task, with list membership).
 
 ## Left as is
 

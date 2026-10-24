@@ -27,6 +27,8 @@ Rules (version ``RULES_VERSION``):
   name order; a chosen replacement is not reused. A pilot10 task that is
   swapped out of subset70 gets the same replacement, so pilot10 stays inside
   subset70.
+- **Needs delegation.** A task needs delegation when it needs at least 6 MCP
+  servers or when the single agent would get more than 128 tools.
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ TOOL_INVENTORY = "tests/fixtures/gym/tool_inventory.json"
 # claim_done, python_execute and view_overlong_output come on top of the task's MCP tools.
 SA_LOCAL_TOOLS = 3
 TOOL_LIMIT = 128
+DELEGATION_MIN_SERVERS = 6
 DEFAULT_SENDER = "user@example.com"
 SWAP_SALT = "evcarry-swap-v1"
 
@@ -235,6 +238,10 @@ def task_facts(name: str, root: Path | None = None) -> TaskFacts:
         email_defect=defect,
         primary_servers=primary_servers(domain, root),
     )
+
+
+def needs_delegation(facts: TaskFacts) -> bool:
+    return facts.n_servers >= DELEGATION_MIN_SERVERS or facts.sa_tools > TOOL_LIMIT
 
 
 def swap_key(name: str) -> str:
