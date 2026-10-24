@@ -133,7 +133,7 @@ The fault injector is off unless an experiment sets `inject`. The decision key i
 
 ## Traces
 
-One JSONL file per run: `{task}__{arm}__{model}__{seed}.jsonl`. A run is finished when a `run_end` event exists. A restart skips that file and does not rewrite it. Events include `run_start`, `llm_call`, `tool_call`, `subagent_return`, `injection`, `check`, `audit`, `policy`, `run_end`. JSONL is the source of truth.
+One JSONL file per run: `{task}__{arm}__{model}__{seed}.jsonl`. A run is finished when a `run_end` event exists. A restart skips that file and does not rewrite it. An unfinished trace is kept as `{name}.jsonl.aborted-{n}` and the run starts again; its calls still count toward the spend cap, which starts from every `llm_call` and `judge_call` cost already in the output directory. Events include `run_start`, `llm_call`, `llm_error` (a model call that raised), `tool_call`, `subagent_return`, `subagent_error` (a sub-agent run or its audit raised), `injection` (`applied: false` when the corruption did not fit the claim), `check`, `audit`, `policy`, `judge_call`, `run_end`. JSONL is the source of truth.
 
 The system prompt is the frozen file under `prompts/v1/` and is the cache prefix. The task's `docs/task.md` is the user message. The gym `agent_system_prompt.md` is hashed into `run_start` and is not sent. Tool names are sorted.
 
