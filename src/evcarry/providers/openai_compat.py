@@ -89,13 +89,21 @@ class LlmCallRecord:
 
 
 def routing_extra_body(routing: dict[str, Any] | None) -> dict[str, Any]:
-    """OpenRouter ``provider`` object. Unknown keys are dropped."""
+    """OpenRouter ``provider`` object, plus a top-level ``service_tier`` when the routing names one. Unknown keys are dropped.
+
+    ``service_tier: default`` matters for a pinned open-weight model: OpenRouter lets a
+    provider's priority endpoint (``deepinfra/fp8/priority``) compete for default traffic
+    under its base slug, at a higher price, unless the request pins the standard tier.
+    """
     if not routing:
         return {}
+    body: dict[str, Any] = {}
     provider = {key: routing[key] for key in _ROUTING_KEYS if key in routing}
-    if not provider:
-        return {}
-    return {"provider": provider}
+    if provider:
+        body["provider"] = provider
+    if routing.get("service_tier"):
+        body["service_tier"] = str(routing["service_tier"])
+    return body
 
 
 def openrouter_headers(*, http_referer: str | None, x_title: str | None) -> dict[str, str]:

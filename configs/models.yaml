@@ -67,3 +67,6 @@ openrouter_ds_1017:
     order: [deepinfra/fp8]
     allow_fallbacks: false
     require_parameters: true
+    # Sent as the top-level service_tier. Without it OpenRouter let deepinfra/fp8/priority (1.5x price)
+    # serve under the deepinfra/fp8 slug and the pin check stopped the first pilot attempt (2026-10-24).
+    service_tier: default

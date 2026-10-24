@@ -189,3 +189,39 @@ def test_every_agent_of_every_arm_is_built_with_temperature_zero() -> None:
             nested = getattr(tool, "_agent_instance", None)
             if nested is not None:
                 assert nested.model_settings.temperature == 0.0, (arm.name, tool.name)
+
+
+async def test_the_pinned_route_asks_for_the_standard_service_tier() -> None:
+    """The first pilot attempt was served by deepinfra/fp8/priority under the deepinfra/fp8 slug; the pin stopped it."""
+    from evcarry.providers.openai_compat import routing_extra_body
+    from evcarry.providers.pin import pin_from_routing
+    from evcarry.providers.registry import load_models
+
+    routing = load_models()["openrouter_ds_1017"].routing
+    body = routing_extra_body(routing)
+    assert body["service_tier"] == "default"
+    assert "service_tier" not in body["provider"] and body["provider"]["order"] == ["deepinfra/fp8"]
+    assert pin_from_routing(routing).tiers == frozenset({"default"})  # what the pin check accepts
+    assert routing_extra_body({"order": ["deepseek"]}) == {"provider": {"order": ["deepseek"]}}
+
+    sent: list[dict] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return httpx2.Response(200, json={
+            "id": "gen-1", "object": "chat.completion", "created": 0, "model": "m", "provider": "DeepInfra",
+            "service_tier": "default",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+
+    http = httpx2.AsyncClient(transport=httpx2.MockTransport(handler), event_hooks={"response": [capture_http_body]})
+    client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key="test-not-real", http_client=http)
+    model = RecordingModel("deepseek/deepseek-v4.1-flash-1017", client, kind="openrouter", routing=routing)
+    await model.get_response(
+        "sys", "hi", ModelSettings(temperature=0.0), [], None, [], ModelTracing.DISABLED,
+        previous_response_id=None, conversation_id=None, prompt=None,
+    )
+    await http.aclose()
+    assert sent[0]["service_tier"] == "default" and sent[0]["provider"]["allow_fallbacks"] is False
+    assert model.take_record().pin.ok is True
