@@ -3,7 +3,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .env
-runs/
+/runs/
 *.pyc
 .ipynb_checkpoints/
 dist/
