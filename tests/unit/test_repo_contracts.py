@@ -118,3 +118,18 @@ def test_flips_labels_and_mcnemar(tmp_path: Path) -> None:
 def test_live_provider_opt_in() -> None:
     if os.environ.get("EVCARRY_LIVE_PROVIDER") != "1":
         pytest.skip("set EVCARRY_LIVE_PROVIDER=1 to call a real endpoint")
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["evcarry.runs.budget", "evcarry.providers.openai_compat", "evcarry.providers.scripted", "evcarry.protocol.judge", "evcarry.runs.manager"],
+)
+def test_each_spend_module_imports_first_in_a_fresh_interpreter(module: str) -> None:
+    """budget is imported by every model; importing providers from it at module level made `import evcarry.runs.budget` fail."""
+    import os
+    import subprocess
+    import sys
+
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    result = subprocess.run([sys.executable, "-c", f"import {module}"], capture_output=True, text=True, env=env, check=False)
+    assert result.returncode == 0, result.stderr[-1500:]

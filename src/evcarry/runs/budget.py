@@ -24,9 +24,12 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from evcarry.providers.usage import PriceTable, is_peak
+if TYPE_CHECKING:
+    # Not at import time: every model imports this module (admit_model_call), and importing
+    # evcarry.providers here would import them back before this module is ready.
+    from evcarry.providers.usage import PriceTable
 
 # What a run in flight may still cost, as a multiple of the ceiling: the call that crosses
 # the ceiling, and the calls already running beside it, complete.
@@ -132,6 +135,8 @@ class BudgetGuard:
         return RESERVE_FACTOR * self.run_ceiling_usd if self.run_ceiling_usd is not None else 0.0
 
     def check(self, *, billable: bool, now: datetime) -> None:
+        from evcarry.providers.usage import is_peak
+
         if not billable:
             return
         if self.schedule == "offpeak_only" and is_peak(now, self.price):
