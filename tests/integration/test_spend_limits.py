@@ -112,7 +112,7 @@ async def test_a_run_at_its_cost_ceiling_stops_fails_and_keeps_its_spend(tmp_pat
     start, end = events[0], events[-1]
     assert start["run_ceiling_usd"] == 0.03
     assert (end["type"], end["agent_status"], end["status"], end["passed"]) == ("run_end", "cost_ceiling", "cost_ceiling", False)
-    assert end["cost_ceiling"] is True and end["eval_ran"] is False
+    assert end["cost_ceiling"] is True and end["eval_ran"] is False and end["eval_passed"] is None  # never graded
     calls = [event for event in events if event["type"] == "llm_call"]
     assert len(calls) == 2  # $0.02 each: the second crosses $0.03, the third is refused
     assert end["spend_usd"] == pytest.approx(0.04) == logged_spend(tmp_path)
@@ -177,3 +177,16 @@ async def test_parallel_billable_runs_stay_under_the_cap(tmp_path: Path, monkeyp
     ends = [read_events(path)[-1] for path in tmp_path.glob("*.jsonl")]
     assert ends and all(end["type"] == "run_end" for end in ends)
     assert sum(end["spend_usd"] for end in ends) == pytest.approx(total)
+
+
+async def test_a_reservation_refusal_waits_for_runs_in_flight_instead_of_stopping_the_grid(tmp_path: Path, monkeypatch) -> None:
+    """Only the reserves of runs in flight blocked the third run; it used to stop every remaining run (exit 2)."""
+    _costly_mock(monkeypatch, billable=True)
+    config = load_experiment("configs/experiments/mock_e2e.yaml")
+    config.parallel_tasks = 3
+    config.budget.run_ceiling_usd = 1.0  # reserve $1.20 a run; the nine runs spend well under $1 together
+    config.budget.cap_usd = 2.5  # two reserves fit, a third does not
+    await run_experiment(config, out_dir=tmp_path)
+    ends = [read_events(path)[-1] for path in tmp_path.glob("*.jsonl")]
+    assert len(ends) == 9 and all(end["type"] == "run_end" and end["passed"] for end in ends)
+    assert logged_spend(tmp_path) < 2.5

@@ -262,3 +262,41 @@ async def test_calls_to_one_sub_agent_run_one_at_a_time() -> None:
     tool = serialized(SimpleNamespace(on_invoke_tool=invoke))
     await asyncio.gather(*(tool.on_invoke_tool(None, f"call-{i}") for i in range(4)))
     assert peak == 1 and order == ["call-0", "call-1", "call-2", "call-3"]
+
+
+async def test_a_reused_provider_call_id_does_not_drop_history_from_later_calls() -> None:
+    """The SDK merges tool items with the same call_id; a repeated id used to drop an earlier result for good."""
+    from agents import function_tool
+
+    from evcarry.harness.sessions import SubagentSession
+    from evcarry.trace.writer import current_writer
+
+    @function_tool
+    def lookup(q: str) -> str:
+        return f"result for {q}"
+
+    class _RawInputs(_InputsModel):
+        def _next_step(self, input: Any) -> ScriptStep:
+            self.raw.append(json.dumps(input, default=str))
+            return super()._next_step(input)
+
+    model = _RawInputs([
+        ScriptStep(tool="lookup", arguments={"q": "first"}, call_id="dup"), ScriptStep(content="r1"),
+        ScriptStep(tool="lookup", arguments={"q": "second"}, call_id="dup"), ScriptStep(content="r2"),
+        ScriptStep(content="r3"),
+    ])
+    model.raw = []
+    agent = Agent(name="researcher", instructions="You are the researcher.", model=model, tools=[lookup])
+    session, writer = SubagentSession("t|1|researcher"), _Events()
+    token = current_writer.set(writer)
+    try:
+        for instruction in ("one", "two", "three"):
+            await Runner.run(agent, instruction, session=session)
+    finally:
+        current_writer.reset(token)
+    stored = [item for item in await session.get_items() if item.get("type") in ("function_call", "function_call_output")]
+    assert [item["call_id"] for item in stored] == ["dup", "dup", "dupr1", "dupr1"]
+    reused = [event for event in writer.events if event["type"] == "subagent_call_id_reused"]
+    assert [(event["call_id"], event["stored_as"]) for event in reused] == [("dup", "dupr1")]
+    later = model.raw[-1]
+    assert "result for first" in later and "result for second" in later

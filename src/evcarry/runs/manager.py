@@ -52,6 +52,7 @@ from evcarry.runs.budget import (
     BudgetGuard,
     CostCeilingExceeded,
     RunMeter,
+    SpendCapExceeded,
     current_run_meter,
     event_spend,
 )
@@ -252,8 +253,9 @@ async def _drive(agent: Any, text: str, hooks: LedgerHooks, config: ExperimentCo
     return {"agent_status": "completed", "final_output": str(result.final_output)[-2000:]}
 
 
-# A run stopped at its cost ceiling is not graded: it counts as failed (owner decision 5).
-_NOT_GRADED_AT_CEILING = {"status": "cost_ceiling", "passed": False, "eval_ran": False}
+# A run stopped at its cost ceiling is not graded (passed: null here, so eval_passed is null);
+# final_verdict then counts it as failed (owner decision 5).
+_NOT_GRADED_AT_CEILING = {"status": "cost_ceiling", "passed": None, "eval_ran": False}
 
 
 async def _run_fixture(
@@ -642,18 +644,30 @@ async def run_experiment(
         semaphore = asyncio.Semaphore(config.parallel_tasks)
         refusals: list[BudgetError] = []
         failures: list[Exception] = []
+        run_ended = asyncio.Condition()
 
         async def _bounded(item: tuple[str, str, int, Path]) -> Path | None:
             task_name, arm_name, seed, path = item
             async with semaphore:
-                if refusals or failures:
-                    return None
-                try:
-                    meter = _admit()
-                except BudgetError as exc:
-                    # Start nothing new; runs already going (and paid for) finish.
-                    refusals.append(exc)
-                    return None
+                while True:
+                    if refusals or failures:
+                        return None
+                    try:
+                        meter = _admit()
+                        break
+                    except SpendCapExceeded as exc:
+                        if guard.live and not guard.cap_reached():
+                            # Only the reserves of runs in flight stand in the way: wait for one to end
+                            # (its unspent reserve is released), then check again, in grid order.
+                            async with run_ended:
+                                await run_ended.wait()
+                            continue
+                        refusals.append(exc)
+                        return None
+                    except BudgetError as exc:
+                        # Start nothing new; runs already going (and paid for) finish.
+                        refusals.append(exc)
+                        return None
                 try:
                     await _one(task_name, arm_name, seed, meter)
                 except Exception as exc:  # noqa: BLE001 - re-raised once the runs in flight are done
@@ -662,6 +676,9 @@ async def run_experiment(
                     # restart runs it again; its spend is counted from its trace.
                     failures.append(exc)
                     return None
+                finally:
+                    async with run_ended:
+                        run_ended.notify_all()
                 return path
 
         tasks = [asyncio.create_task(_bounded(item)) for item in pending]
