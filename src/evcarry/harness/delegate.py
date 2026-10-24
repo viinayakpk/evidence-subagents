@@ -15,9 +15,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agents import RunConfig, Runner
+from agents import Runner
 
 from evcarry.harness.hooks import LedgerHooks
+from evcarry.harness.run_settings import harness_run_config
 from evcarry.inject.corruptions import CorruptionError
 from evcarry.inject.injector import FaultInjector
 from evcarry.protocol.audit import audit_return
@@ -68,7 +69,7 @@ async def _coerce(run_result: Any, agent: Any, hooks: LedgerHooks, max_turns: in
             _continued(run_result, repair_prompt),
             hooks=hooks,
             max_turns=max_turns,
-            run_config=RunConfig(tracing_disabled=True),
+            run_config=harness_run_config(),
         )
         parsed, _repairs = parse_subagent_return(_as_text(repaired.final_output))
         return parsed, repaired
@@ -150,7 +151,7 @@ def make_extractor(
                 _continued(run_result, feedback_message(policy)),
                 hooks=hooks,
                 max_turns=max_turns,
-                run_config=RunConfig(tracing_disabled=True),
+                run_config=harness_run_config(),
             )
             return await _review(second, prior=1)
         if policy.action == "fallback":

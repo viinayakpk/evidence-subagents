@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agents import Agent, RunConfig
+from agents import Agent
 from agents.agent import StopAtTools
 from agents.tool import default_tool_error_function
 
@@ -12,6 +12,7 @@ from evcarry.harness.arms import ArmSpec
 from evcarry.harness.delegate import DelegateState, make_extractor
 from evcarry.harness.hooks import LedgerHooks
 from evcarry.harness.prompts import subagent_instructions, prompt_text
+from evcarry.harness.run_settings import harness_run_config
 from evcarry.harness.tools import Toolset, build_tools
 from evcarry.inject.injector import FaultInjector
 from evcarry.protocol.schema import SubagentReturn
@@ -144,7 +145,7 @@ def build_main_agent(
                 hooks=hooks,
                 # The SDK default is 10 turns per nested run, far below a gym task's budget.
                 max_turns=max_turns,
-                run_config=RunConfig(tracing_disabled=True),
+                run_config=harness_run_config(),
                 failure_error_function=_logged_failure(writer, name),
             )
         )

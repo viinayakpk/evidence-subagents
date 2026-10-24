@@ -122,6 +122,25 @@ async def test_a_corruption_that_does_not_fit_is_skipped_not_fatal() -> None:
     assert [event["action"] for event in writer.events if event["type"] == "policy"] == ["accept"]
 
 
+async def test_an_unknown_tool_call_goes_back_to_the_model(tmp_path) -> None:
+    """The SDK default raised ModelBehaviorError, which ended the run and cancelled the grid."""
+    from evcarry.runs.config import load_experiment
+    from evcarry.runs.manager import run_experiment
+    from evcarry.trace.writer import read_events
+
+    script = json.loads(open("tests/fixtures/scripts/sa.json", encoding="utf-8").read())
+    steps = script["tasks"]["fixture-sections"]["agents"]["main"]
+    steps.insert(0, {"tool": "filesystem-read_file", "arguments": {"path": "x"}, "call_id": "call_no_such_tool"})
+    override = tmp_path / "sa_unknown_tool.json"
+    override.write_text(json.dumps(script), encoding="utf-8")
+    config = load_experiment("configs/experiments/mock_e2e.yaml")
+    config.arms = ["sa"]
+    config.tasks = "tests/fixtures/tasks/one_sections.txt"
+    await run_experiment(config, out_dir=tmp_path / "out", script_overrides={"sa": override})
+    end = read_events(next((tmp_path / "out").glob("*.jsonl")))[-1]
+    assert end["type"] == "run_end" and end["agent_status"] == "completed" and end["passed"] is True
+
+
 async def test_a_failing_sub_agent_run_is_traced(tmp_path) -> None:
     from evcarry.runs.config import load_experiment
     from evcarry.runs.manager import run_experiment

@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from agents import RunConfig, Runner, set_trace_processors
+from agents import Runner, set_trace_processors
 from agents.exceptions import MaxTurnsExceeded
 
 from evcarry.env.fake_mcp import FakeMcp
@@ -34,6 +34,7 @@ from evcarry.harness.agents import build_main_agent
 from evcarry.harness.arms import arm_spec, effective_audit
 from evcarry.harness.hooks import LedgerHooks
 from evcarry.harness.prompts import prompt_path
+from evcarry.harness.run_settings import harness_run_config
 from evcarry.harness.tools import OVERLONG_META, VIEW_OVERLONG, ToolRouter, Toolset, fixture_toolset, overlong_view
 from evcarry.inject.injector import FaultInjector
 from evcarry.ledger.ledger import Ledger
@@ -193,7 +194,7 @@ async def _drive(agent: Any, text: str, hooks: LedgerHooks, config: ExperimentCo
                 text,
                 hooks=hooks,
                 max_turns=config.limits.max_steps,
-                run_config=RunConfig(tracing_disabled=True),
+                run_config=harness_run_config(),
             ),
             timeout=config.limits.max_seconds,
         )
