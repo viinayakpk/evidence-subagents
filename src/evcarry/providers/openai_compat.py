@@ -26,6 +26,7 @@ from openai.types.responses.response_prompt_param import ResponsePromptParam
 
 from evcarry.providers.identity import ServedIdentity, served_identity
 from evcarry.providers.usage import TokenUsage, token_usage_from_body
+from evcarry.trace.writer import current_writer
 
 # One bucket per in-flight get_response, so concurrent calls do not share attempts.
 _HTTP_BODIES: ContextVar[list[dict[str, Any]] | None] = ContextVar("evcarry_http_bodies", default=None)
@@ -177,7 +178,7 @@ class RecordingModel(OpenAIChatCompletionsModel):
             extra_headers=headers or None,
         )
 
-    def _record(self, bucket: list[dict[str, Any]], started: float, system_instructions: str | None) -> None:
+    def _record(self, bucket: list[dict[str, Any]], started: float, system_instructions: str | None) -> LlmCallRecord:
         successes = [item for item in bucket if 200 <= int(item.get("status", 0)) < 300]
         chosen = successes[-1]["body"] if successes else (bucket[-1]["body"] if bucket else None)
         identity = served_identity(chosen, kind=self.kind, configured_model=self.configured_model)
@@ -193,7 +194,32 @@ class RecordingModel(OpenAIChatCompletionsModel):
             system_instructions=system_instructions,
         )
         self.history.append(record)
-        self._pending.append(record)
+        return record
+
+    def _trace_failure(self, record: LlmCallRecord, bucket: list[dict[str, Any]], error: BaseException) -> None:
+        """An ``llm_error`` event for a call that raised. ``on_llm_end`` never sees it.
+
+        Tokens and served model are reported only when a 2xx body was captured
+        (the call was answered and billed, then failed in the SDK).
+        """
+        writer = current_writer.get()
+        if writer is None:
+            return
+        answered = any(200 <= int(item.get("status", 0)) < 300 for item in bucket)
+        writer.write(
+            {
+                "type": "llm_error",
+                "configured_model": record.configured_model,
+                "kind": record.kind,
+                "error_type": type(error).__name__,
+                "error": str(error)[:1000],
+                "attempts": record.attempts,
+                "statuses": [item.get("status") for item in bucket],
+                "served_model": record.identity.served_model if answered else None,
+                "tokens": record.usage.as_dict() if answered else None,
+                "latency_ms": record.latency_ms,
+            }
+        )
 
     async def get_response(
         self,
@@ -212,7 +238,7 @@ class RecordingModel(OpenAIChatCompletionsModel):
         token = _HTTP_BODIES.set(bucket)
         started = time.perf_counter()
         try:
-            return await super().get_response(
+            response = await super().get_response(
                 system_instructions,
                 input,
                 self._merge_settings(model_settings),
@@ -224,9 +250,16 @@ class RecordingModel(OpenAIChatCompletionsModel):
                 conversation_id=conversation_id,
                 prompt=prompt,
             )
+        except BaseException as error:
+            # Not queued for take_record: on_llm_end does not run for a failed call, so a
+            # queued record would be paired with the next successful call and that
+            # call's tokens and served model would be logged as this one's (zero, requested id).
+            self._trace_failure(self._record(bucket, started, system_instructions), bucket, error)
+            raise
         finally:
-            self._record(bucket, started, system_instructions)
             _HTTP_BODIES.reset(token)
+        self._pending.append(self._record(bucket, started, system_instructions))
+        return response
 
     def stream_response(
         self,
