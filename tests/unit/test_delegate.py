@@ -79,7 +79,7 @@ async def test_redelegation_continues_the_sub_agents_conversation() -> None:
     second_input = model.inputs[1]
     assert INSTRUCTION in second_input
     assert "paper-A has 11 sections" in second_input
-    assert "Your previous return was rejected" in second_input
+    assert "could not verify some claims" in second_input
 
 
 async def test_repair_continues_the_conversation_and_fences_cost_no_repair() -> None:
@@ -236,7 +236,7 @@ async def test_redelegation_with_a_session_continues_it_without_repeating_the_hi
     assert json.loads(accepted)["claims"][0]["value"] == 14
     second_input = model.inputs[1]
     assert second_input.count(INSTRUCTION) == 1
-    assert "paper-A has 11 sections" in second_input and "Your previous return was rejected" in second_input
+    assert "paper-A has 11 sections" in second_input and "could not verify some claims" in second_input
     # The session keeps both attempts, so the main agent's next call to this sub-agent sees them.
     kept = _input_text(await session.get_items())
     assert "paper-A has 11 sections" in kept and "paper-A has 14 sections" in kept

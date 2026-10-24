@@ -22,7 +22,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from evcarry.harness.arms import ARMS
-from evcarry.harness.prompts import SUBAGENT_TOOL_DESCRIPTIONS, prompt_text, repair_prompt, subagent_instructions
+from evcarry.harness.prompts import (
+    SUBAGENT_TOOL_DESCRIPTIONS,
+    prompt_text,
+    repair_prompt,
+    subagent_instructions,
+    subagent_tool_block,
+)
 from evcarry.paths import resolve_repo_path
 
 FREEZE_FILE = "FROZEN.json"
@@ -34,9 +40,9 @@ def _sha256(text: str) -> str:
 
 def rendered_prompts(prompts_dir: str | Path) -> dict[str, str]:
     from evcarry.env.gym_tools import CLAIM_DONE_META, PYTHON_EXECUTE_META
-    from evcarry.harness.tools import OVERLONG_META, display_text
+    from evcarry.harness.tools import OVERLONG_META, ToolMeta, display_text
     from evcarry.protocol.judge import JUDGE_PROMPT
-    from evcarry.protocol.policy import PolicyDecision, fallback_message, feedback_message
+    from evcarry.protocol.policy import PolicyDecision, fallback_message, feedback_message, rejected_note
 
     texts: dict[str, str] = {}
     for name, spec in sorted(ARMS.items()):
@@ -52,6 +58,12 @@ def rendered_prompts(prompts_dir: str | Path) -> dict[str, str]:
     texts["message/repair"] = repair_prompt(prompts_dir, "<parse error>")
     texts["message/redelegate"] = feedback_message(decision)
     texts["message/fallback"] = fallback_message("<subagent>", decision)
+    texts["message/rejected_claim"] = rejected_note("<claim>", "<reason>")
+    example = {
+        name: ToolMeta(name, "", {}, name != "srv-write", server=None if name == "python_execute" else "srv")
+        for name in ("srv-read", "srv-write", "python_execute")
+    }
+    texts["message/subagent_tools"] = subagent_tool_block(("srv-read",), tuple(example), example)
     texts["message/tool_result"] = display_text("x" * 40, "<call_id>", show_call_id=True, max_chars=20)
     texts["judge"] = resolve_repo_path(JUDGE_PROMPT).read_text(encoding="utf-8")
     return texts

@@ -10,8 +10,9 @@ from agents.tool import default_tool_error_function
 
 from evcarry.harness.arms import ArmSpec
 from evcarry.harness.delegate import DelegateState, make_extractor
+from evcarry.harness.handoffs import traced_handoff
 from evcarry.harness.hooks import LedgerHooks
-from evcarry.harness.prompts import SUBAGENT_TOOL_DESCRIPTIONS, prompt_text, subagent_instructions
+from evcarry.harness.prompts import SUBAGENT_TOOL_DESCRIPTIONS, prompt_text, subagent_instructions, subagent_tool_block
 from evcarry.harness.run_settings import agent_model_settings, harness_run_config
 from evcarry.harness.sessions import SubagentSession, serialized
 from evcarry.harness.tools import Toolset, build_tools
@@ -143,22 +144,29 @@ def build_main_agent(
                 session=session,
             )
         sub_tools.append(
-            serialized(sub.as_tool(
+            # Serialised outermost, so the instruction is logged when the call starts, not while it waits.
+            serialized(traced_handoff(sub.as_tool(
                 tool_name=name,
                 tool_description=SUBAGENT_TOOL_DESCRIPTIONS[name],
                 custom_output_extractor=extractor,
                 hooks=hooks,
-                # Per nested run (owner decision 5: 40 in the pilot and headline, every arm). The SDK default is 10.
+                # Per nested run (100 from 2026-10-25, every arm; it was 40 in the pilot). The SDK default is 10.
                 max_turns=subagent_max_turns,
                 run_config=harness_run_config(),
                 session=session,
                 failure_error_function=_logged_failure(writer, name),
-            ))
+            ), writer, name))
         )
     ordered = sorted(sub_tools, key=lambda tool: tool.name) + build_tools(toolset.main_extra, caller, toolset)
+    # P2-5 (2026-10-25): every delegating arm's main agent is told each sub-agent's tools, in the same words.
+    instructions = (
+        prompt_text(prompts_dir, arm.name).rstrip("\n")
+        + "\n\n"
+        + subagent_tool_block(toolset.researcher, toolset.operator, toolset.catalog)
+    )
     return Agent(
         name="main",
-        instructions=prompt_text(prompts_dir, arm.name),
+        instructions=instructions,
         tools=ordered,
         model=_model(model_config, script, task, "main"),
         model_settings=agent_model_settings(),

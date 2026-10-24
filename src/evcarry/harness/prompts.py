@@ -51,6 +51,29 @@ SUBAGENT_TOOL_DESCRIPTIONS = {
 DEFAULT_REPAIR = "The previous return was not valid JSON for the claim schema. Return one JSON object and nothing else."
 
 
+def subagent_tool_block(researcher: tuple[str, ...] | list[str], operator: tuple[str, ...] | list[str], catalog: dict) -> str:
+    """The sub-agents' tool names by server, appended to every delegating arm's main prompt (P2-5, 2026-10-25).
+
+    In the pilot, main agents asked sub-agents to list their tools, and the evidence arm's
+    checks rejected those replies (66 of 192 failing checks). The text is generated from the
+    run's toolset, so it is the same in every delegating arm for a given task.
+    """
+
+    def listing(names: tuple[str, ...] | list[str]) -> str:
+        groups: dict[str, list[str]] = {}
+        for name in sorted(names):
+            meta = catalog.get(name)
+            server = getattr(meta, "server", None) or "local"
+            groups.setdefault(server, []).append(name)
+        return "; ".join(f"{server}: {', '.join(tools)}" for server, tools in sorted(groups.items())) or "none"
+
+    return (
+        "The sub-agents' tools in this task (you do not need to ask a sub-agent which tools it has):\n"
+        f"- researcher: {listing(researcher)}\n"
+        f"- operator: {listing(operator)}\n"
+    )
+
+
 def subagent_instructions(prompts_dir: str | Path, role: str, arm: str) -> str:
     """Role prompt, then the arm's return-format file (``_RETURN_FILE``) after a blank line, if the set has it."""
     text = prompt_text(prompts_dir, role)

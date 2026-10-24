@@ -5,6 +5,8 @@ Each claim is:
 Each evidence item cites one tool call:
 {"type": "tool_call", "call_id": "<the id from that result's [call_id: ...] line>", "span": "<a short quote copied exactly from that result>"}
 Rules:
+- Claims are about the task's data and the actions you took. Put everything else in open_issues, not in claims: which tools you have, notes about the environment, and statements that something does not exist or was not found.
+- One checkable fact per claim: one value, one record or one action. Do not add details that the cited results do not show.
 - Cite the call whose result supports the claim. Copy the span character for character from that result.
 - Write numbers in value exactly as they appear in the cited result. For a derived value, cite every call it is computed from and list the claims it depends on.
 - For an action, cite the write call that performed it.
