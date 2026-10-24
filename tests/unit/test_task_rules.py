@@ -11,7 +11,10 @@ from evcarry.env.task_rules import (
     EMAIL_CONFIG_WITHOUT_PASSWORD,
     UNPASSABLE_SENDER_CHECK,
     TaskFacts,
+    dev_key,
+    dev_tasks,
     email_sender,
+    headline_tasks,
     needs_delegation,
     plan_swaps,
     required_senders,
@@ -123,6 +126,52 @@ def test_lists_have_no_email_defect_and_stay_nested() -> None:
         assert row["old"] not in subset and row["new"] in subset
         assert int(row["new_sa_tools"]) <= 128
     assert [row["old"] for row in swaps if row["list"] == "subset70+pilot10"] == ["sf-sla-breach-audit"]
+
+
+def test_the_pre_registered_split_and_the_dev_rule() -> None:
+    """P0-1 (2026-10-25): primary headline = subset70 minus pilot10; dev tasks from pool160 minus subset70, never pilot10."""
+    pool = load_task_list(ROOT / "tasks" / "pool160.txt")
+    subset = load_task_list(ROOT / "tasks" / "subset70.txt")
+    pilot = load_task_list(ROOT / "tasks" / "pilot10.txt")
+    headline = load_task_list(ROOT / "tasks" / "headline60.txt")
+    assert headline == headline_tasks(subset, pilot)
+    assert len(headline) == 60 and not set(headline) & set(pilot) and set(headline) | set(pilot) == set(subset)
+    dev = load_task_list(ROOT / "tasks" / "dev.txt")
+    facts = {name: task_facts(name) for name in pool}
+    assert dev == dev_tasks(pool, subset, pilot, facts) == ["train-sf-sales-trip-excel-word-email", "sf-support-metrics-pdf-email"]
+    assert not set(dev) & set(subset)
+    assert all(facts[name].email_defect is None and facts[name].sa_tools <= 150 for name in dev)
+    assert dev_key(dev[0]) < dev_key(dev[1])
+    # The rule on synthetic facts: excluded lists, defects and tool counts are skipped; the lowest keys win.
+    synthetic = {
+        name: _facts(name, "d", 4, tools=tools, defect=defect)
+        for name, tools, defect in (
+            ("in-subset", 50, None), ("in-pilot", 50, None), ("broken", 50, EMAIL_CONFIG_WITHOUT_PASSWORD),
+            ("too-many-tools", 151, None), ("a", 150, None), ("b", 10, None), ("c", 10, None),
+        )
+    }
+    chosen = dev_tasks(list(synthetic), ["in-subset"], ["in-pilot"], synthetic, count=2)
+    assert chosen == sorted(["a", "b", "c"], key=dev_key)[:2]
+
+
+def test_the_docx_table_rule_flags_only_the_known_defect_in_subset70(tmp_path: Path) -> None:
+    from evcarry.env.task_rules import docx_table_defect
+    from evcarry.env.toolathlon import gym_task_root
+
+    root = gym_task_root()
+    if not (root / "sf-sales-region-analysis-gsheet-email").is_dir():
+        pytest.skip("toolathlon_gym submodule is not checked out")
+    subset = load_task_list(ROOT / "tasks" / "subset70.txt")
+    assert [name for name in subset if docx_table_defect(root / name)] == ["sf-sales-region-analysis-gsheet-email"]
+    # "vegetable" is not a table, and a grader that reads tables is fine.
+    task = _evaluation(tmp_path, "doc = Document(p)\ntext = ' '.join(x.text for x in doc.paragraphs)\n")
+    (task / "docs").mkdir()
+    (task / "docs" / "task.md").write_text("Write Menu.docx listing each vegetable dish.\n", encoding="utf-8")
+    assert not docx_table_defect(task)
+    (task / "docs" / "task.md").write_text("Write Menu.docx with a table of dishes.\n", encoding="utf-8")
+    assert docx_table_defect(task)
+    (task / "evaluation" / "main.py").write_text("doc = Document(p)\nrows = doc.tables[0].rows\n", encoding="utf-8")
+    assert not docx_table_defect(task)
 
 
 def _facts(name: str, domain: str, n: int, tools: int = 50, defect: str | None = None, servers=()) -> TaskFacts:

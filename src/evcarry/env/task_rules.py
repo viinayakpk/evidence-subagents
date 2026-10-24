@@ -29,6 +29,15 @@ Rules (version ``RULES_VERSION``):
   subset70.
 - **Needs delegation.** A task needs delegation when it needs at least 6 MCP
   servers or when the single agent would get more than 128 tools.
+
+Split (``SPLIT_VERSION``, pre-registered 2026-10-25, before the headline): every
+pilot10 task is in subset70, and the fixes after the pilot were found on pilot10's
+traces. The primary headline is therefore subset70 minus pilot10 (60 tasks,
+``tasks/headline60.txt``); pilot10 is reported separately and never pooled into the
+primary analysis. Fixes are verified on dev tasks drawn by a seeded rule from
+pool160 minus subset70 (never pilot10): no email defect, at most 150 SA tools (the
+verified tool limit), the first ``DEV_COUNT`` in ascending order of
+``sha256("evcarry-dev-v1|" + task)`` (``tasks/dev.txt``).
 """
 
 from __future__ import annotations
@@ -53,6 +62,11 @@ TOOL_LIMIT = 128
 DELEGATION_MIN_SERVERS = 6
 DEFAULT_SENDER = "user@example.com"
 SWAP_SALT = "evcarry-swap-v1"
+SPLIT_VERSION = "evcarry-split-v1"
+DEV_SALT = "evcarry-dev-v1"
+# DeepInfra took 150 tools in one request (docs/TASK_RULES.md section 1); more is unverified.
+DEV_TOOL_LIMIT = 150
+DEV_COUNT = 2
 
 EMAIL_CONFIG_WITHOUT_PASSWORD = "email_config_without_password"
 EMAIL_CONFIG_INVALID = "email_config_invalid"
@@ -288,3 +302,50 @@ def plan_swaps(subset: list[str], pool: list[str], facts: dict[str, TaskFacts]) 
 def apply_swaps(names: list[str], swaps: list[Swap]) -> list[str]:
     mapping = {swap.old: swap.new for swap in swaps}
     return sorted(mapping.get(name, name) for name in names)
+
+
+_WORD_DOCUMENT = re.compile(r"\bdocx\b|\bword (?:document|report|file)\b", re.IGNORECASE)
+_TABLE_WORD = re.compile(r"\btables?\b", re.IGNORECASE)
+
+
+def docx_table_defect(task_dir: Path) -> bool:
+    """Grader rule (P2-4, 2026-10-25): the spec asks for a table in a Word document, the grader cannot see one.
+
+    True when a line of ``docs/task.md`` names a Word document (``.docx``, "Word document")
+    and a table, and the task's evaluation opens a docx (``Document(``) and reads its
+    ``.paragraphs`` but never its ``.tables``: correct output then fails. In subset70 this
+    flags only ``sf-sales-region-analysis-gsheet-email`` (a pilot10 task, outside the
+    primary headline). The Notion property-shape defect is handled by the Notion mock
+    patch (``docker/gym/wire_pg_routers.py``), not by this rule.
+    """
+    spec = task_dir / "docs" / "task.md"
+    if not spec.is_file():
+        return False
+    lines = spec.read_text(encoding="utf-8", errors="ignore").splitlines()
+    if not any(_WORD_DOCUMENT.search(line) and _TABLE_WORD.search(line) for line in lines):
+        return False
+    code = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in sorted((task_dir / "evaluation").rglob("*.py")))
+    return "Document(" in code and ".paragraphs" in code and ".tables" not in code
+
+
+def headline_tasks(subset: list[str], pilot: list[str]) -> list[str]:
+    """The primary headline set: subset70 minus pilot10, in subset order."""
+    excluded = set(pilot)
+    return [name for name in subset if name not in excluded]
+
+
+def dev_key(name: str) -> str:
+    return hashlib.sha256(f"{DEV_SALT}|{name}".encode("utf-8")).hexdigest()
+
+
+def dev_tasks(
+    pool: list[str], subset: list[str], pilot: list[str], facts: dict[str, TaskFacts], count: int = DEV_COUNT
+) -> list[str]:
+    """Fix-verification tasks: pool160 minus subset70 and pilot10, no email defect, at most 150 SA tools, by ``dev_key``."""
+    excluded = set(subset) | set(pilot)
+    candidates = [
+        name
+        for name in pool
+        if name not in excluded and facts[name].email_defect is None and facts[name].sa_tools <= DEV_TOOL_LIMIT
+    ]
+    return sorted(candidates, key=dev_key)[:count]

@@ -91,6 +91,29 @@ Both thresholds were chosen from task metadata only. The two parts are stored se
 
 File: `tasks/delegation_labels.csv` (every gym task, with list membership).
 
+## 4. Split: primary headline and dev tasks (`evcarry-split-v1`, 2026-10-25)
+
+Written after the M4 pilot and before any headline run (plan amendment A1). Every pilot10 task is in subset70, and the fixes made after the pilot were found on pilot10's traces. So:
+
+- **Primary headline:** subset70 minus pilot10, 60 tasks (`tasks/headline60.txt`, sha256 `0cc37a56…`). pilot10 is reported separately and never pooled into the primary analysis.
+- **Dev tasks** (fix verification): from pool160 minus subset70 (so never pilot10), keep tasks with no email defect and at most 150 SA tools (the verified tool limit, section 1), sort by `sha256("evcarry-dev-v1|" + task)`, take the first 2 (`tasks/dev.txt`, sha256 `e5128143…`):
+
+| rank | task | servers | SA tools | sha256 prefix |
+| --- | --- | --- | --- | --- |
+| 1 | train-sf-sales-trip-excel-word-email | 6 | 143 | 00c29ae7 |
+| 2 | sf-support-metrics-pdf-email | 4 | 65 | 09035320 |
+| (next) | gcal-snowflake-deadline-tracker | 6 | 105 | 0cf87e88 |
+
+53 pool160 tasks outside subset70 qualify. Code: `task_rules.headline_tasks`, `task_rules.dev_tasks`; `scripts/apply_task_rules.py` writes both lists, their hashes in `tasks/SHA256SUMS`, and the `split=` and `dev_rule=` lines of `tasks/FROZEN.txt`; `--check` verifies them.
+
+## 5. Grader defects (2026-10-25, plan amendment A10)
+
+The pilot showed four tasks whose graders fail correct output (`docs/PILOT_DIAGNOSIS.md` section 4). All four are pilot10 tasks, so A1 already keeps them out of the primary headline. For the other subset70 tasks:
+
+- **Notion property shape.** The gym's Notion mock stored and returned a page's properties exactly as the request sent them. The real Notion API returns every property value with `id` and `type`, and every rich-text item with `type`, `annotations`, `plain_text` and `href`. Graders that read those keys found nothing. The mock is patched to store and return the API's shape (`docker/gym/wire_pg_routers.py`, marker `evcarry-notion-shape-v1`): additive, deterministic property ids, page updates merged rather than replaced, and string block children parsed. In subset70 this concerns `canvas-module-completion-notion-gcal`, `fetch-sf-hr-training-notion-gcal-excel`, `yt-ml-repos-github-notion-excel-email` (pilot10), and `yf-financial-health-excel-notion` and `wc-review-summary` (headline60). If the patch fails its check after `make gym-images`, the two headline60 tasks are swapped by the section 2 rule before the headline.
+- **Table in a Word document.** `task_rules.docx_table_defect` flags a task when a line of its spec names a Word document and a table, and its grader opens the docx and reads `.paragraphs` but never `.tables`. In subset70 it flags only `sf-sales-region-analysis-gsheet-email` (pilot10). No headline60 task is flagged, so none is swapped.
+- **Not a static rule.** Two remaining pilot10 defects need data or judgement, not a static rule: `fetch-sf-hr-training`'s hard-coded R&D, where the warehouse ranks Support lower, and `wc-shipping-analysis`'s header `zone` where the spec says "Zone name". Two headline60 docx graders read only paragraphs where the spec's wording invites a table without saying so: `wc-customer-loyalty-word-gsheet` (higher risk) and `pw-sf-benchmark-excel-word-email`. They stay in the headline, and their per-task results are reported next to the rest.
+
 ## Left as is
 
 - pool160 still contains the 12 defective email tasks above; it is only the source of replacements. Any M6 grid drawn from pool160 must exclude them by the same rule.

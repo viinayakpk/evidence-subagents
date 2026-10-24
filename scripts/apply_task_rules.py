@@ -9,7 +9,10 @@ on whatever the list files hold now. Then:
 2. writes ``tasks/subset70.txt``, ``tasks/pilot10.txt``, ``tasks/SHA256SUMS``,
    the swap table ``tasks/swaps.csv``, the email audit ``tasks/email_audit.csv``
    and the delegation labels ``tasks/delegation_labels.csv``;
-3. records the rule version and the pre-swap hashes in ``tasks/FROZEN.txt``.
+3. writes the pre-registered split (2026-10-25): ``tasks/headline60.txt`` (subset70
+   minus pilot10, the primary headline) and ``tasks/dev.txt`` (the fix-verification
+   tasks, ``task_rules.dev_tasks``);
+4. records the rule versions and the pre-swap hashes in ``tasks/FROZEN.txt``.
 
 ``--check`` writes nothing and exits 1 if any output would change.
 pool160 is not modified: it is the source of replacements.
@@ -27,10 +30,16 @@ from pathlib import Path
 
 from evcarry.env.task_rules import (
     DELEGATION_MIN_SERVERS,
+    DEV_COUNT,
+    DEV_SALT,
+    DEV_TOOL_LIMIT,
     RULES_VERSION,
+    SPLIT_VERSION,
     TOOL_LIMIT,
     TaskFacts,
     apply_swaps,
+    dev_tasks,
+    headline_tasks,
     needs_delegation,
     plan_swaps,
     swap_key,
@@ -81,6 +90,26 @@ def list_bytes(name: str, names: list[str], swapped: int) -> bytes:
     return "\n".join([*lines, *names, ""]).encode("utf-8")
 
 
+def headline_bytes(names: list[str]) -> bytes:
+    freeze = _freeze_module()
+    lines = [
+        f"# frozen stratified sample seed {freeze.SEED}",
+        f"# headline 60: subset70 minus pilot10 ({SPLIT_VERSION}; the primary analysis)",
+        f"# gym {freeze.GYM_COMMIT}",
+    ]
+    return "\n".join([*lines, *names, ""]).encode("utf-8")
+
+
+def dev_bytes(names: list[str]) -> bytes:
+    freeze = _freeze_module()
+    lines = [
+        f"# dev tasks: {DEV_SALT} over pool160 minus subset70 (no email defect, at most {DEV_TOOL_LIMIT} SA tools), "
+        "lowest sha256 first",
+        f"# gym {freeze.GYM_COMMIT}",
+    ]
+    return "\n".join([*lines, *names, ""]).encode("utf-8")
+
+
 def _csv(header: list[str], rows: list[list[object]]) -> bytes:
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
@@ -100,6 +129,8 @@ def outputs() -> tuple[dict[str, bytes], list]:
     files: dict[str, bytes] = {
         "tasks/subset70.txt": list_bytes("subset70", subset, len(swaps)),
         "tasks/pilot10.txt": list_bytes("pilot10", pilot, pilot_swapped),
+        "tasks/headline60.txt": headline_bytes(headline_tasks(subset, pilot)),
+        "tasks/dev.txt": dev_bytes(dev_tasks(original["pool160"], subset, pilot, facts)),
     }
     pool_bytes = (ROOT / "tasks" / "pool160.txt").read_bytes()
     assert pool_bytes == original_bytes("pool160", original["pool160"], _LABELS["pool160"]), "pool160 is not the frozen sample"
@@ -107,6 +138,8 @@ def outputs() -> tuple[dict[str, bytes], list]:
         f"{hashlib.sha256(pool_bytes).hexdigest()}  tasks/pool160.txt",
         f"{hashlib.sha256(files['tasks/subset70.txt']).hexdigest()}  tasks/subset70.txt",
         f"{hashlib.sha256(files['tasks/pilot10.txt']).hexdigest()}  tasks/pilot10.txt",
+        f"{hashlib.sha256(files['tasks/headline60.txt']).hexdigest()}  tasks/headline60.txt",
+        f"{hashlib.sha256(files['tasks/dev.txt']).hexdigest()}  tasks/dev.txt",
     ]
     files["tasks/SHA256SUMS"] = ("\n".join(sums) + "\n").encode("utf-8")
     files["tasks/swaps.csv"] = _csv(
@@ -149,7 +182,8 @@ def outputs() -> tuple[dict[str, bytes], list]:
         ],
     )
     frozen = (ROOT / "tasks" / "FROZEN.txt").read_text(encoding="utf-8")
-    kept = [line for line in frozen.splitlines() if line and not line.startswith(("rules=", "pre_swap_sha256_", "swapped_"))]
+    generated = ("rules=", "pre_swap_sha256_", "swapped_", "split=", "dev_rule=")
+    kept = [line for line in frozen.splitlines() if line and not line.startswith(generated)]
     kept += [
         f"rules={RULES_VERSION} (src/evcarry/env/task_rules.py, scripts/apply_task_rules.py, docs/TASK_RULES.md)",
         f"swapped_subset70={len(swaps)}",
@@ -158,6 +192,10 @@ def outputs() -> tuple[dict[str, bytes], list]:
         + hashlib.sha256(original_bytes("subset70", original["subset70"], _LABELS["subset70"])).hexdigest(),
         "pre_swap_sha256_pilot10="
         + hashlib.sha256(original_bytes("pilot10", original["pilot10"], _LABELS["pilot10"])).hexdigest(),
+        f"split={SPLIT_VERSION} (primary headline = subset70 minus pilot10, tasks/headline60.txt; "
+        "pilot10 reported separately; fixes verified on tasks/dev.txt)",
+        f"dev_rule={DEV_SALT}: pool160 minus subset70, no email defect, at most {DEV_TOOL_LIMIT} SA tools, "
+        f'the first {DEV_COUNT} by sha256("{DEV_SALT}|" + task)',
     ]
     files["tasks/FROZEN.txt"] = ("\n".join(kept) + "\n").encode("utf-8")
     return files, swaps

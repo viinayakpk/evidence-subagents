@@ -19,7 +19,10 @@ from evcarry.trace.writer import JsonlWriter, current_writer
 def test_task_list_hashes_and_loader() -> None:
     root = repo_root()
     sums = (root / "tasks" / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
-    assert len(sums) == 3
+    # pool160, subset70, pilot10, and (2026-10-25) the headline60 / dev split.
+    assert [line.split("  ", 1)[1] for line in sums] == [
+        "tasks/pool160.txt", "tasks/subset70.txt", "tasks/pilot10.txt", "tasks/headline60.txt", "tasks/dev.txt",
+    ]
     for line in sums:
         digest, name = line.split("  ", 1)
         path = root / name
