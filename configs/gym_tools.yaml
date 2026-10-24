@@ -47,6 +47,10 @@ nondeterministic:
   pdf-tools: [search_pdf_next_page, search_pdf_prev_page, search_pdf_go_page]
   youtube: [channels_navigateList]
   emails: [get_unread_count, get_mailbox_stats]
+  # Annotated readOnlyHint=true, but it (re)loads the file into the server's
+  # presentation table: replayed with the same id it would discard the operator's
+  # unsaved edits to that presentation, and without an id it returns a new id.
+  pptx: [open_presentation]
 
 stateful_servers: [playwright_with_chunk]
 

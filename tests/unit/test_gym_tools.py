@@ -91,6 +91,10 @@ def test_readback_and_volatile_metadata() -> None:
     other = text.replace("9f5ab76e", "11111111")
     assert mask_volatile(text, list(query.volatile)) == mask_volatile(other, list(query.volatile))
     assert policy.meta("filesystem", _tool("filesystem", "get_file_info")).nondeterministic
+    # Still a researcher tool, but L2 must never issue it again (it would reload the
+    # presentation over the operator's unsaved edits).
+    opened = policy.meta("pptx", _tool("pptx", "open_presentation"))
+    assert opened.read_only and opened.nondeterministic
 
 
 def test_server_exec_args_follow_the_gym_env_rule() -> None:
