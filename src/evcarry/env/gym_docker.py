@@ -304,6 +304,7 @@ class GymRunInfo:
     timings: dict[str, float] = field(default_factory=dict)
     preprocess: dict[str, Any] | None = None
     servers: dict[str, dict[str, Any]] = field(default_factory=dict)
+    sealed: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -317,6 +318,7 @@ class GymRunInfo:
             "timings": {key: round(value, 3) for key, value in self.timings.items()},
             "preprocess": self.preprocess,
             "servers": self.servers,
+            "sealed": self.sealed,
         }
 
 
@@ -334,8 +336,10 @@ class GymTaskEnv:
         server_specs: dict[str, McpServerSpec] | None = None,
         setup_timeout: float = 300.0,
         eval_timeout: float = 600.0,
+        seal: bool = True,
     ) -> None:
         self.task = task
+        self.seal = seal
         self.images = images or GymImages.default()
         self.policy = policy or GymToolPolicy.load()
         self.log_dir = log_dir
@@ -411,7 +415,47 @@ class GymTaskEnv:
         mark = time.perf_counter()
         await self._connect_servers()
         info.timings["mcp_connect_s"] = time.perf_counter() - mark
+        if self.seal:
+            await self._seal()
         info.timings["setup_s"] = time.perf_counter() - started
+
+    @property
+    def sealed_copy(self) -> Path:
+        return self.log_dir / "sealed_task"
+
+    async def _seal(self) -> None:
+        """Remove the answers from the container before the agent starts.
+
+        The image holds all 503 tasks with their evaluation code and ground truth
+        (``groundtruth_workspace/``, but also ``files/groundtruth_data.json``,
+        ``generate_groundtruth.py`` and the like) plus the gym's ``.git``. The agent's
+        ``python_execute`` and terminal tools run as root here, so the files are deleted,
+        not hidden. This task's directory is first copied to the host as it is after
+        preprocess (``sealed_task`` in the log dir); ``_unseal`` puts it back for grading.
+        MCP servers are already running; the emails server read its config at start.
+        """
+        mark = time.perf_counter()
+        shutil.rmtree(self.sealed_copy, ignore_errors=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        await self._docker("cp", f"{self.info.agent}:{self.task_dir}", str(self.sealed_copy), timeout=300)
+        tasks = f"{GYM_HOME}/tasks/finalpool"
+        script = " && ".join(
+            [
+                f"find {tasks} -mindepth 1 -maxdepth 1 ! -name {shlex.quote(self.task.name)} -exec rm -rf {{}} +",
+                f"rm -rf {GYM_HOME}/.git {GYM_HOME}/explorer {self.task_dir}/evaluation {self.task_dir}/groundtruth_workspace",
+                f"find {self.task_dir} -iname '*groundtruth*' -prune -exec rm -rf {{}} +",
+            ]
+        )
+        await self._docker("exec", self.info.agent, "bash", "-c", script, timeout=300)
+        self.info.sealed = True
+        self.info.timings["seal_s"] = time.perf_counter() - mark
+
+    async def _unseal(self) -> None:
+        """Put this task's directory back exactly as it was after preprocess; agent edits there are discarded."""
+        if not self.info.sealed:
+            return
+        await self._docker("exec", self.info.agent, "rm", "-rf", self.task_dir, timeout=120)
+        await self._docker("cp", f"{self.sealed_copy}/.", f"{self.info.agent}:{self.task_dir}", timeout=300)
 
     async def _wait_for_postgres(self) -> None:
         deadline = time.monotonic() + self.setup_timeout
@@ -569,6 +613,7 @@ class GymTaskEnv:
             return {"status": "no_eval_script", "passed": None, "eval_ran": False}
         result_file = f"{RUN_DIR}/eval_result.json"
         mark = time.perf_counter()
+        await self._unseal()
         limit = int(self.eval_timeout)
         result = await self._docker(
             "exec", "-w", GYM_HOME, self.info.agent, *_kill_after(limit), PYTHON_BIN, "-m", self._module("evaluation"),
@@ -605,6 +650,24 @@ class GymTaskEnv:
 
 
 _KILLED = 137  # exit status of a command that `timeout -s KILL` stopped
+
+# Tool arguments that reach for answers: removed task files, the gym's history, or its public repo
+# (github.com/eigent-ai/...). Not "toolathlon": the gym's own Postgres database is named toolathlon_gym.
+GROUND_TRUTH_MARKERS = (
+    "groundtruth", "ground_truth", "/workspace/tasks", "tasks/finalpool", "/workspace/.git",
+    "eigent-ai", "evaluation/main",
+)
+
+
+def ground_truth_suspects(ledger: Any) -> list[dict[str, str]]:
+    """Ledger calls whose arguments mention a ground-truth marker. Recorded in run_end for review."""
+    found = []
+    for entry in getattr(ledger, "entries", {}).values():
+        text = json.dumps(entry.arguments, ensure_ascii=False, default=str).lower()
+        hits = [marker for marker in GROUND_TRUTH_MARKERS if marker in text]
+        if hits:
+            found.append({"call_id": entry.call_id, "tool": entry.tool_name, "markers": ",".join(hits)})
+    return found
 
 
 def _kill_after(seconds: int) -> list[str]:

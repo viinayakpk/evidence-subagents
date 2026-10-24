@@ -100,9 +100,12 @@ M6 hooks, not used yet: `serving/serve_primary.sh`, `serving/serve_fallback.sh`,
 1. Start Postgres from `evcarry/toolathlon-gym-pg:<commit>` (the gym dump already loaded, ready in about a second) and the agent container from `evcarry/toolathlon-gym:<commit>`.
 2. Copy the task's `initial_workspace` to `/workspace/agent_workspace` and run the task's `preprocess` module, as the gym's `TaskAgent` does.
 3. Start each MCP server the task needs inside the agent container with the command, env and cwd from the gym YAML, and talk to it over `docker exec -i` stdio (MCP SDK client in `legacy` handshake mode; two gym servers crash on `server/discover`).
+   Then seal the container: the image holds all 503 tasks with their evaluation code and ground truth (`groundtruth_workspace/`, `files/groundtruth_data.json`, `generate_groundtruth.py`, ...) and the gym's `.git`, and the agent's `python_execute` and terminal tools run as root. This task's directory is copied to the host (`logs/<run>/sealed_task`), then every other task, this task's `evaluation/` and every `*groundtruth*` path, `.git` and `explorer/` are deleted. The directory is put back just before grading. On all ten pilot tasks, grading an untouched environment gives identical output sealed and unsealed.
 4. Run the arm. Tools are named `{server}-{tool}`, with input schemas rewritten as the gym's agent rewrites them. Local tools are `claim_done` (ends the run, as in the gym), `python_execute` (the gym's contract, run in the container) and `view_overlong_output` (pages a result cut at `gym.tool_output_chars`, default 8000 like the gym).
 5. If the agent called `claim_done`, run the task's `evaluation` module in the container; exit code 0 is a pass. Without `claim_done` the gym does not grade, and `passed` is false.
 6. Copy the workspace to `runs/<exp>/workspaces/`, write the ledger to `runs/<exp>/ledgers/`, then remove the run's containers (with their volumes) and network by label.
+
+`run_end` records `sealed` and `ground_truth_suspects`: ledger calls whose arguments mention ground-truth paths, the gym's git history, or its public repo (`eigent-ai`). The container still has internet access, so an agent could fetch the public repo; the suspects list is how that would show.
 
 A task whose environment cannot start (a server, the preprocess, or a docker step fails) ends with `status: env_error` and `passed: null`; the other runs continue. Tool errors go back to the model as text. Preprocess, `python_execute` and evaluation are killed inside the container at their time limits.
 

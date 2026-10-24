@@ -57,6 +57,7 @@ async def test_gym_mock_grid_runs_grades_and_tears_down(tmp_path: Path) -> None:
         assert end["type"] == "run_end"
         assert end["passed"] is True, (path.name, end.get("eval"))
         assert end["eval_ran"] is True and end["claimed_done"] is True
+        assert end["sealed"] is True and end["ground_truth_suspects"] == []
         assert "PASS" in end["eval"]["stdout_tail"]
         run_names = _names(events)
         assert not names & run_names  # every run had its own network and containers
@@ -173,3 +174,31 @@ async def test_python_execute_timeout_kills_the_process_in_the_container(tmp_pat
         assert out.startswith("=== TIMEOUT ===")
         ps = await env._docker("exec", env.info.agent, "ps", "-eo", "args", check=False)
         assert "slow.py" not in ps.stdout
+
+
+async def test_the_agent_container_holds_no_answers_until_grading(tmp_path: Path) -> None:
+    """The image ships every task's evaluation and ground truth, and the gym's .git; the agent runs as root."""
+    task = load_task("sf-hr-rating-distribution", gym_task_root())
+    async with GymTaskEnv(task, log_dir=tmp_path / "logs") as env:
+        assert env.info.sealed
+        look = await env._docker(
+            "exec", env.info.agent, "bash", "-c",
+            "ls /workspace/tasks/finalpool; ls -a /workspace/tasks/finalpool/*; test -e /workspace/.git && echo HAS_GIT; "
+            "find / -xdev -iname '*groundtruth*' -not -path '/proc/*' 2>/dev/null | grep -v /agent_workspace/ || true",
+        )
+        listing = look.stdout
+        assert listing.splitlines()[0] == task.name  # no other task is left
+        assert "evaluation" not in listing and "groundtruth" not in listing.lower() and "HAS_GIT" not in listing
+        attempt = await env.python_execute(
+            {"code": "import os; print(os.path.exists('/workspace/tasks/finalpool/sf-hr-rating-distribution/groundtruth_workspace'))"}
+        )
+        assert "False" in attempt
+        # The host copy is the task directory as it was after preprocess.
+        assert (env.sealed_copy / "evaluation" / "main.py").is_file()
+        env.claimed_done = True
+        result = await env.evaluate()  # the agent did nothing, so it fails, but it runs with its ground truth
+        assert result["eval_ran"] is True and result["passed"] is False
+        stderr = result["eval"]["stderr_tail"] + result["eval"]["stdout_tail"]
+        assert "No such file" not in stderr and "ModuleNotFoundError" not in stderr
+        back = await env._docker("exec", env.info.agent, "ls", f"/workspace/tasks/finalpool/{task.name}")
+        assert "groundtruth_workspace" in back.stdout and "evaluation" in back.stdout

@@ -270,3 +270,17 @@ async def test_judge_evidence_shows_the_call_and_reads_back_once() -> None:
     assert "print('Total orders: 718')" in next(t for t in seen if "python_execute" in t)
     assert "--- read-back of mail now (emails-search_emails):\n1. Subject: Report" in next(t for t in seen if "send_email" in t)
     assert by_text and not report.failures
+
+
+def test_ground_truth_suspects_flags_answer_seeking_calls() -> None:
+    from evcarry.env.gym_docker import ground_truth_suspects
+    from evcarry.ledger.ledger import Ledger
+
+    ledger = Ledger()
+    ledger.record(call_id="a", tool_name="python_execute", arguments={"code": "open('/workspace/tasks/finalpool/x/groundtruth_workspace/y.xlsx')"}, result_text="", read_only=False)
+    ledger.record(call_id="b", tool_name="fetch-fetch_html", arguments={"url": "https://github.com/eigent-ai/toolathlon_gym"}, result_text="", read_only=True)
+    ledger.record(call_id="c", tool_name="excel-read_data_from_excel", arguments={"filepath": "/workspace/agent_workspace/report.xlsx"}, result_text="", read_only=True)
+    ledger.record(call_id="d", tool_name="python_execute", arguments={"code": "psycopg2.connect(dbname='toolathlon_gym')"}, result_text="", read_only=False)
+    found = {item["call_id"]: item["markers"] for item in ground_truth_suspects(ledger)}
+    assert set(found) == {"a", "b"}
+    assert "groundtruth" in found["a"] and "eigent-ai" in found["b"]

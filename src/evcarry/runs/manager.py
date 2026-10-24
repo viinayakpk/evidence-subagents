@@ -280,7 +280,7 @@ async def _run_gym(
     price: Any,
     config: ExperimentConfig,
 ) -> dict[str, Any]:
-    from evcarry.env.gym_docker import CLAIM_DONE, PYTHON_EXECUTE, GymTaskEnv
+    from evcarry.env.gym_docker import CLAIM_DONE, PYTHON_EXECUTE, GymTaskEnv, ground_truth_suspects
     from evcarry.env.gym_tools import GymToolPolicy
 
     gym = config.gym
@@ -353,6 +353,9 @@ async def _run_gym(
         **outcome,
         **evaluation,
         "claimed_done": env.claimed_done,
+        "sealed": env.info.sealed,
+        # Tool calls that reached for answers (removed task files, the gym's git history or public repo).
+        "ground_truth_suspects": ground_truth_suspects(ledger),
         "gym_run_id": env.info.run_id,
         "timings": {key: round(value, 3) for key, value in env.info.timings.items()},
     }
