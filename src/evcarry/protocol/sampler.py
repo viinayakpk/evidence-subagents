@@ -68,7 +68,8 @@ def sample_risk(
     return [claim.claim_id for claim in ranked[:k]]
 
 
-def sample_random(claims: list[Claim], *, rate: float, seed: int, budget: int | None = None) -> list[str]:
+def sample_random(claims: list[Claim], *, rate: float, seed: int | str, budget: int | None = None) -> list[str]:
+    """``seed`` should differ per return (the harness passes task, run seed and return index)."""
     k = budget_count(len(claims), rate) if budget is None else min(len(claims), budget)
     if k <= 0:
         return []

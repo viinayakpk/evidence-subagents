@@ -86,7 +86,7 @@ async def audit_return(
     checks: tuple[str, ...] | list[str],
     sampler: str | None,
     rate: float,
-    seed: int,
+    seed: int | str,
     judge: Any = None,
     require_evidence: bool = True,
     file_root=None,

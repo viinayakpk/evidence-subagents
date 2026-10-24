@@ -103,7 +103,9 @@ def make_extractor(
             checks=checks,
             sampler=sampler,
             rate=rate,
-            seed=seed,
+            # One random-audit draw per return. The bare run seed gave every return the
+            # same draw; the "audit|" prefix keeps it apart from the injector's stream.
+            seed=f"audit|{task}|{seed}|{index}",
             judge=judge or LexicalJudge(),
             require_evidence=require_evidence,
         )

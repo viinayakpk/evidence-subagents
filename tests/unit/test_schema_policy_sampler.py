@@ -90,3 +90,44 @@ def test_sampler_budget_and_risk_order() -> None:
     assert first == second
     assert len(sample_random(claims, rate=0.3, seed=7)) == 1
     assert budget_count(1, 0.3) == 0
+
+
+class _Events:
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def write(self, event: dict) -> None:
+        self.events.append(event)
+
+
+async def test_random_audit_draws_again_for_each_return() -> None:
+    """The random control used the run seed for every return, so it always audited the same position."""
+    from types import SimpleNamespace
+
+    from evcarry.harness.delegate import DelegateState, make_extractor
+    from evcarry.ledger.ledger import Ledger
+
+    writer = _Events()
+    extractor = make_extractor(
+        agent=None, hooks=None, writer=writer, ledger=Ledger(), caller=None, task="t", seed=1, arm="evidence_random",
+        checks=("L2",), sampler="random", rate=0.5, require_evidence=True, injector=None, state=DelegateState(),
+        max_turns=5,
+    )
+    payload = SubagentReturn(
+        subagent_id="researcher", status="complete", claims=[_claim(f"c{i}") for i in range(4)], open_issues=[]
+    )
+    for _ in range(12):
+        await extractor(SimpleNamespace(final_output=payload))
+    draws = [tuple(event["sampled"]) for event in writer.events if event["type"] == "audit"]
+    assert len(draws) == 12 and all(len(draw) == 2 for draw in draws)
+    assert len(set(draws)) > 1
+    # Still reproducible: the same task, seed and return index give the same draw.
+    again = _Events()
+    replay = make_extractor(
+        agent=None, hooks=None, writer=again, ledger=Ledger(), caller=None, task="t", seed=1, arm="evidence_random",
+        checks=("L2",), sampler="random", rate=0.5, require_evidence=True, injector=None, state=DelegateState(),
+        max_turns=5,
+    )
+    for _ in range(12):
+        await replay(SimpleNamespace(final_output=payload))
+    assert [tuple(event["sampled"]) for event in again.events if event["type"] == "audit"] == draws
