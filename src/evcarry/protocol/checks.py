@@ -206,7 +206,15 @@ def span_in_text(span: str, text: str) -> bool:
     wanted = clean_span(span)
     if not wanted:
         return True
-    return wanted in normalize_text(decode_escapes(text))
+    haystack = normalize_text(decode_escapes(text))
+    if wanted in haystack:
+        return True
+    # A Python repr in the result doubles each backslash (``['\\\\Sent']``) and the quoted span often
+    # has one (dev run 2026-10-25, sf-sales-trip evidence_risk return 9): compare with runs of backslashes as one.
+    return "\\" in haystack + wanted and _BACKSLASHES.sub(r"\\", wanted) in _BACKSLASHES.sub(r"\\", haystack)
+
+
+_BACKSLASHES = re.compile(r"\\{2,}")
 
 
 def _edge(char: str, *, before: bool) -> str:
