@@ -93,6 +93,29 @@ class LlmCallRecord:
     pin: PinCheck | None = None
     # The sampling temperature the request carried (None: not sent, so the provider default applied).
     temperature: float | None = None
+    # The ``reasoning`` object the request carried (None: not sent, so the provider default applied).
+    reasoning: dict[str, Any] | None = None
+    # Why the provider stopped generating (``stop``, ``tool_calls``, ``length``, ...) and OpenRouter's
+    # ``native_finish_reason``; ``truncated`` is True when the reply was cut at its token limit.
+    finish_reason: str | None = None
+    native_finish_reason: str | None = None
+    reasoning_tokens: int | None = None
+
+    @property
+    def truncated(self) -> bool | None:
+        if self.finish_reason is None and self.native_finish_reason is None:
+            return None
+        return "length" in (self.finish_reason, self.native_finish_reason) or self.native_finish_reason == "max_tokens"
+
+    def stop_fields(self) -> dict[str, object]:
+        """``finish_reason``, ``native_finish_reason``, ``truncated``, ``reasoning`` and ``reasoning_tokens`` for a trace event (C9, C6)."""
+        return {
+            "finish_reason": self.finish_reason,
+            "native_finish_reason": self.native_finish_reason,
+            "truncated": self.truncated,
+            "reasoning": self.reasoning,
+            "reasoning_tokens": self.reasoning_tokens,
+        }
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -105,6 +128,7 @@ class LlmCallRecord:
             "usage": self.usage.as_dict(),
             "provider_check": self.pin.as_dict() if self.pin is not None else None,
             "temperature": self.temperature,
+            **self.stop_fields(),
         }
 
     def cost(self, price: PriceTable, at: datetime) -> CallCost:
@@ -162,6 +186,34 @@ def openrouter_headers(*, http_referer: str | None, x_title: str | None) -> dict
     return headers
 
 
+def sent_reasoning(request: httpx2.Request) -> dict[str, Any] | None:
+    """The ``reasoning`` object in a request's JSON body, or None when the request did not send one."""
+    try:
+        body = json.loads(request.content)
+    except Exception:
+        return None
+    value = body.get("reasoning") if isinstance(body, dict) else None
+    return dict(value) if isinstance(value, dict) else None
+
+
+def finish_fields(body: Any) -> tuple[str | None, str | None, int | None]:
+    """``(finish_reason, native_finish_reason, reasoning_tokens)`` of a chat-completions response body."""
+    if not isinstance(body, dict):
+        return None, None, None
+    choices = body.get("choices")
+    first = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    finish = first.get("finish_reason")
+    native = first.get("native_finish_reason")
+    usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    details = usage.get("completion_tokens_details") if isinstance(usage.get("completion_tokens_details"), dict) else {}
+    reasoning = details.get("reasoning_tokens")
+    return (
+        str(finish) if finish is not None else None,
+        str(native) if native is not None else None,
+        int(reasoning) if isinstance(reasoning, (int, float)) and not isinstance(reasoning, bool) else None,
+    )
+
+
 def sent_temperature(request: httpx2.Request) -> float | None:
     """The ``temperature`` in a request's JSON body, or None when the request did not send one."""
     try:
@@ -183,7 +235,14 @@ async def capture_http_body(response: httpx2.Response) -> None:
     except Exception:
         return
     if isinstance(payload, dict):
-        bucket.append({"status": response.status_code, "body": payload, "temperature": sent_temperature(response.request)})
+        bucket.append(
+            {
+                "status": response.status_code,
+                "body": payload,
+                "temperature": sent_temperature(response.request),
+                "reasoning": sent_reasoning(response.request),
+            }
+        )
 
 
 def http_client_with_capture(**kwargs: Any) -> httpx2.AsyncClient:
@@ -222,8 +281,12 @@ class RecordingModel(OpenAIChatCompletionsModel):
         routing: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
         price: PriceTable | None = None,
+        agent_extra_body: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(model=model, openai_client=openai_client)
+        # Request body every agent call carries (C6, 2026-10-25: the reasoning effort, pinned instead of the
+        # provider default). Not sent while ``role`` is "judge": the judge sends its own ``judge_extra_body``.
+        self.agent_extra_body = dict(agent_extra_body) if agent_extra_body else None
         self.kind = kind
         # Prices a call that was answered (and billed) but then failed in the SDK.
         self.price = price
@@ -245,6 +308,8 @@ class RecordingModel(OpenAIChatCompletionsModel):
     def _merge_settings(self, model_settings: ModelSettings) -> ModelSettings:
         pinned = routing_extra_body(self.routing)
         body = dict(model_settings.extra_body or {})
+        if self.role == "agent" and self.agent_extra_body:
+            body = {**self.agent_extra_body, **body}
         if "provider" in pinned and isinstance(body.get("provider"), dict):
             # The model config's routing wins over a per-call provider object.
             provider = {**body["provider"], **pinned["provider"]}
@@ -266,6 +331,7 @@ class RecordingModel(OpenAIChatCompletionsModel):
         chosen = attempt["body"] if attempt else None
         identity = served_identity(chosen, kind=self.kind, configured_model=self.configured_model)
         usage = token_usage_from_body(chosen if isinstance(chosen, dict) else None)
+        finish, native, reasoning_tokens = finish_fields(chosen) if successes else (None, None, None)
         record = LlmCallRecord(
             configured_model=self.configured_model,
             kind=self.kind,
@@ -277,6 +343,10 @@ class RecordingModel(OpenAIChatCompletionsModel):
             system_instructions=system_instructions,
             pin=check_pin(identity, self.routing) if successes else None,
             temperature=attempt.get("temperature") if attempt else None,
+            reasoning=attempt.get("reasoning") if attempt else None,
+            finish_reason=finish,
+            native_finish_reason=native,
+            reasoning_tokens=reasoning_tokens,
         )
         self.history.append(record)
         return record
@@ -311,6 +381,7 @@ class RecordingModel(OpenAIChatCompletionsModel):
                 **(record.provenance() if answered else {"served_model": None}),
                 "tokens": record.usage.as_dict() if answered else None,
                 "temperature": record.temperature,
+                **record.stop_fields(),
                 **cost,
                 "latency_ms": record.latency_ms,
             }

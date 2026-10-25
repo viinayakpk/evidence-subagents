@@ -63,6 +63,8 @@ class LedgerHooks(RunHooks):
                 "attempts": record.attempts,
                 "tokens": record.usage.as_dict(),
                 "temperature": record.temperature,
+                # finish_reason, native_finish_reason, truncated, reasoning sent, reasoning_tokens (C9, C6).
+                **record.stop_fields(),
                 # Priced at the endpoint that served the call, and never below OpenRouter's own cost.
                 **record.cost(self.price, now).fields(),
                 "latency_ms": record.latency_ms,

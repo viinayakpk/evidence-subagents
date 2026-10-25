@@ -75,10 +75,17 @@ openrouter_ds_1017:
     # Sent as the top-level service_tier. Without it OpenRouter let deepinfra/fp8/priority (1.5x price)
     # serve under the deepinfra/fp8 slug and the pin check stopped the first pilot attempt (2026-10-24).
     service_tier: default
-  # L3 judge calls only (agents keep the provider default). Fixed 2026-10-25, before the judge sample is
+  # L3 judge calls only (agents: agent_extra_body below). Fixed 2026-10-25, before the judge sample is
   # hand-labelled (P3-3): reasoning stays on at low effort. In the pilot, under the provider default, 86% of
   # the judge's 182k output tokens were hidden reasoning. All three endpoints list `reasoning` and
   # `reasoning_effort` in supported_parameters (docs/evidence/openrouter_endpoints_..._2026-10-24b.json), so
   # require_parameters still matches the set. Changing it after the hand labels invalidates them.
   judge_extra_body:
     reasoning: {effort: low}
+  # Agent calls only: main agent and sub-agents, every arm (C6, plan amendment A19, 2026-10-25). Pinned to the
+  # model's OpenRouter default, so every endpoint of the set gets the same explicit setting and the dev runs'
+  # behaviour is kept: GET /api/v1/models lists default_enabled: true, default_effort: high, supported efforts
+  # max/high/low/none (docs/evidence/openrouter_model_deepseek-v4.1-flash-1017_2026-10-25.json). All three
+  # endpoints list `reasoning` in supported_parameters (the 2026-10-24b endpoints file above).
+  agent_extra_body:
+    reasoning: {effort: high}

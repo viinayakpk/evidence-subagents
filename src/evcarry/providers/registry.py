@@ -41,6 +41,8 @@ class ModelConfig:
     script: str | None = None
     # Extra request body for this model's L3 judge calls only (its reasoning setting), never for agent calls.
     judge_extra_body: dict[str, Any] | None = None
+    # Extra request body for this model's agent calls (main agent and sub-agents), never for judge calls (C6).
+    agent_extra_body: dict[str, Any] | None = None
 
     def price_table(self) -> PriceTable:
         if not self.prices:
@@ -76,6 +78,7 @@ def load_models(path: str | Path | None = None) -> dict[str, ModelConfig]:
             json_schema_outputs=bool(body.get("json_schema_outputs", True)),
             script=body.get("script"),
             judge_extra_body=body.get("judge_extra_body"),
+            agent_extra_body=body.get("agent_extra_body"),
         )
     return loaded
 
@@ -138,4 +141,5 @@ def build_model(
         routing=config.routing,
         extra_headers=headers,
         price=config.price_table(),
+        agent_extra_body=config.agent_extra_body,
     )
