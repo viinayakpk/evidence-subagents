@@ -420,7 +420,7 @@ async def _run_gym(
     price: Any,
     config: ExperimentConfig,
 ) -> dict[str, Any]:
-    from evcarry.env.contamination import contamination, removed_fingerprints, tier
+    from evcarry.env.contamination import db_writes, contamination, removed_fingerprints, tier
     from evcarry.env.gym_docker import CLAIM_DONE, PYTHON_EXECUTE, GymTaskEnv
     from evcarry.env.gym_tools import GymToolPolicy
 
@@ -437,6 +437,7 @@ async def _run_gym(
         eval_timeout=gym.eval_timeout_s,
         network_internal=gym.network_internal,
         hide_task_dir=gym.hide_task_dir,
+        agent_db_readonly=gym.agent_db_readonly,
     )
     ledger = Ledger()
     try:
@@ -505,6 +506,8 @@ async def _run_gym(
         "ground_truth_suspects": found["attempted"],
         "ground_truth_obtained": found["obtained"],
         "contamination_tier": tier(found),
+        # A20: direct writes to the mock services' data (logged and reported; not a contamination tier).
+        "db_write_attempts": db_writes(ledger),
         "gym_run_id": env.info.run_id,
         "timings": {key: round(value, 3) for key, value in env.info.timings.items()},
     }
@@ -586,6 +589,7 @@ async def _run_one(
                 "reference_endpoint": price.reference_endpoint,
                 "gym_network_internal": config.gym.network_internal if config.environment == "docker" else None,
                 "gym_hide_task_dir": config.gym.hide_task_dir if config.environment == "docker" else None,
+                "gym_agent_db_readonly": config.gym.agent_db_readonly if config.environment == "docker" else None,
                 # C2 (A19): 1 for a first run; earlier attempts of this run are set aside next to it.
                 "attempt": len(earlier) + 1,
                 "ts": datetime.now(timezone.utc).isoformat(),

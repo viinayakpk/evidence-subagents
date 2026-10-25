@@ -199,3 +199,49 @@ def tier(found: dict[str, list[dict[str, str]]]) -> str:
     if found.get("attempted"):
         return "attempted"
     return "none"
+
+
+# -- A20 (2026-10-25): direct writes to the mock services' data ---------------------------------------------
+# A write statement (INSERT, UPDATE, DELETE, TRUNCATE, ALTER/DROP/CREATE TABLE, MERGE, COPY ... FROM) whose
+# target is a two-part name in one of the run database's mock-service schemas, in any tool call's arguments:
+# python_execute or terminal code, and the snowflake mock's write_query/read_query, which passes two-part
+# names through untranslated. Snowflake's own DB.SCHEMA.TABLE names are three-part and do not match, so
+# legitimate snowflake writes (sf_data, through its MCP server) are not flagged. Logged and reported, not a
+# contamination tier: a write is not a reach for ground truth (A9, A14), and with ``agent_db_readonly`` it is
+# denied, so the graded state is what the tools produced. ``denied``: the call's result says permission denied.
+MOCK_SCHEMAS = (
+    "arxiv", "arxiv_latex", "canvas", "email", "gcal", "gform", "gsheet", "notion", "public", "scholarly",
+    "sf", "sf_data", "train", "wc", "yf", "youtube",
+)
+_WRITE_VERB = r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?|(?:ALTER|DROP|CREATE)\s+TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?|MERGE\s+INTO|COPY)"
+_DB_WRITE = re.compile(
+    rf"\b{_WRITE_VERB}\s+(?:ONLY\s+)?\"?(?P<schema>{'|'.join(MOCK_SCHEMAS)})\"?\s*\.\s*\"?(?P<table>[A-Za-z_]\w*)\"?(?!\s*\.\s*\"?[A-Za-z_])",
+    re.IGNORECASE,
+)
+_PERMISSION_DENIED = re.compile(r"permission denied for (?:table|relation|schema|sequence|database)|must be owner of", re.IGNORECASE)
+
+
+def db_write_targets(arguments: dict[str, Any]) -> list[str]:
+    """``schema.table`` targets of write statements against mock-service schemas in a call's arguments."""
+    found: list[str] = []
+    for text in _strings(arguments):
+        for match in _DB_WRITE.finditer(text):
+            found.append(f"{match.group('schema').lower()}.{match.group('table').lower()}")
+    return list(dict.fromkeys(found))
+
+
+def db_writes(ledger: Any) -> list[dict[str, Any]]:
+    """One row per ledger call that tried to write the mock services' data directly (A20)."""
+    rows: list[dict[str, Any]] = []
+    for entry in getattr(ledger, "entries", {}).values():
+        targets = db_write_targets(entry.arguments)
+        if targets:
+            rows.append(
+                {
+                    "call_id": entry.call_id,
+                    "tool": entry.tool_name,
+                    "targets": ",".join(targets),
+                    "denied": bool(_PERMISSION_DENIED.search(entry.result_text or "")),
+                }
+            )
+    return rows
