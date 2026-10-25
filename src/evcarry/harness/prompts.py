@@ -9,6 +9,7 @@ from evcarry.paths import resolve_repo_path
 _ARM_FILE = {
     "sa": "sa_system.md",
     "vanilla_mad": "vanilla_system.md",
+    "budget_matched": "vanilla_system.md",
     "self_verify": "self_verify_system.md",
     "typed": "typed_system.md",
     "evidence": "evidence_system.md",
@@ -34,6 +35,7 @@ def prompt_text(prompts_dir: str | Path, name: str) -> str:
 # a prompt set without the file (prompts/v1) sends the role prompt alone.
 _RETURN_FILE = {
     "vanilla_mad": "return_text.md",
+    "budget_matched": "return_text.md",
     "self_verify": "return_text_self_verify.md",
     "typed": "return_typed.md",
     "evidence": "return_claims.md",

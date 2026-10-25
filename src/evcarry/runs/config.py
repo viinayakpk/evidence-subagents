@@ -85,6 +85,17 @@ class GymConfig(_Strict):
     hide_task_dir: bool = False
 
 
+class SamplingConfig(_Strict):
+    """Agent sampling (plan amendment A22, 2026-10-25). The L3 judge keeps ``run_settings.TEMPERATURE``.
+
+    ``send_seed``: send the run's seed as the API ``seed`` parameter on every agent call, so seeds of a
+    task differ at temperature > 0 and a seed can be re-run on a provider that honours it.
+    """
+
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    send_seed: bool = False
+
+
 class ExperimentConfig(_Strict):
     experiment: str
     tasks: str
@@ -99,6 +110,7 @@ class ExperimentConfig(_Strict):
     # A billable run always refuses a frozen set that has changed.
     require_frozen_prompts: bool = False
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
+    sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     parallel_tasks: int = 1
     # A19 (2026-10-25): attempts per (task, seed) block before a block hit by infrastructure errors is dropped.
     max_block_attempts: int = Field(default=2, ge=1)

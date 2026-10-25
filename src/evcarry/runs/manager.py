@@ -39,7 +39,7 @@ from evcarry.harness.arms import arm_spec, effective_audit
 from evcarry.harness.context import ContextTrimmer, current_trimmer
 from evcarry.harness.hooks import LedgerHooks
 from evcarry.harness.prompts import prompt_path
-from evcarry.harness.run_settings import TEMPERATURE, harness_run_config
+from evcarry.harness.run_settings import TEMPERATURE, AgentSampling, current_sampling, harness_run_config
 from evcarry.harness.tools import OVERLONG_META, VIEW_OVERLONG, ToolRouter, Toolset, fixture_toolset, overlong_view
 from evcarry.inject.injector import FaultInjector
 from evcarry.ledger.ledger import Ledger
@@ -546,6 +546,9 @@ async def _run_one(
     meter_token = current_run_meter.set(meter)
     # Every Runner.run of this run (harness_run_config) enforces limits.context with this trimmer.
     trimmer_token = current_trimmer.set(ContextTrimmer(config.limits.context))
+    # A22: agent temperature and seed for this run; the judge keeps TEMPERATURE.
+    sampling = AgentSampling(config.sampling.temperature, seed if config.sampling.send_seed else None)
+    sampling_token = current_sampling.set(sampling)
     try:
         prompt_file = prompt_path(config.prompts, arm_name)
         routing = model_config.routing
@@ -572,7 +575,8 @@ async def _run_one(
                 "environment": config.environment,
                 "judge_model": config.judge_model,
                 # Sent on every agent and judge call of every arm (llm_call/judge_call log what each request carried).
-                "temperature": TEMPERATURE,
+                "temperature": sampling.temperature,
+                "api_seed": sampling.seed,
                 "judge_temperature": TEMPERATURE,
                 "max_steps": config.limits.max_steps,
                 "subagent_max_turns": subagent_turns(config),
@@ -706,6 +710,7 @@ async def _run_one(
         writer.write({"type": "run_error", "error_type": type(exc).__name__, "error": str(exc)[:2000]})
         raise
     finally:
+        current_sampling.reset(sampling_token)
         current_trimmer.reset(trimmer_token)
         current_run_meter.reset(meter_token)
         current_pin_guard.reset(pin_token)

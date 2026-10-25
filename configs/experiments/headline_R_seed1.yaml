@@ -1,0 +1,29 @@
+# Headline, design R, seed 1 (plan amendments A21 and A22, registered 2026-10-25). DO NOT RUN without the owner's go.
+# DeepSeek-V4.1-Flash-1017 through OpenRouter, pinned fp8 set (openrouter_ds_1017); the L3 judge is the same model
+# at its registered settings (temperature 0, reasoning low; A12). Needs OPENROUTER_API_KEY.
+# - tasks: headline60 (sha256 0cc37a56badfe6e481a98e480b1e2116404b04fbd5f1ac4453c5fe234741ea8b).
+# - arms: the four arms of design R. self_verify is not in the headline (A21); it stays in the code and the local grid.
+# - seed 1 only; seed 2 (vanilla_mad, evidence_risk, budget_matched; not sa) runs from a second config into the same
+#   folder, only if the A19f seed-2 cap allows.
+# - agents sample at temperature 0.6 and send the run seed as the API `seed` (A22); the judge stays at 0.
+# - the same limits, ceiling, gym isolation and context as dev_verify (100 turns, $0.17 reference ceiling,
+#   131,072-token context, no internet, no gym tree).
+# - prompts/gym_v1 must be frozen and unchanged: FROZEN.json manifest sha256 is written in the A21 entry of
+#   docs/plan/EXPERIMENT_PLAN.md and checked at start (require_frozen_prompts).
+experiment: headline_R
+tasks: tasks/headline60.txt
+arms: [sa, vanilla_mad, evidence_risk, budget_matched]
+seeds: [1]
+model: openrouter_ds_1017
+audit: {sampler: risk, rate: 0.3, checks: [L0, L1, L2, L3]}
+judge_model: openrouter_ds_1017
+sampling: {temperature: 0.6, send_seed: true}
+limits: {max_steps: 100, subagent_max_turns: 100, max_seconds: 7200, context: 131072}
+prompts: prompts/gym_v1
+require_frozen_prompts: true
+budget: {cap_usd: 30, run_ceiling_usd: 0.17, ceiling_basis: reference, reserve_billed_per_reference: 1.6, schedule: offpeak_only}
+parallel_tasks: 8
+out: runs/headline_R
+environment: docker
+task_root: third_party/toolathlon_gym/tasks/finalpool
+gym: {network_internal: true, hide_task_dir: true}

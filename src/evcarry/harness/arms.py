@@ -15,12 +15,18 @@ class ArmSpec:
     default_rate: float
     require_evidence: bool
     script: str
+    # Blind re-delegations per sub-agent call (budget_matched, A21): the harness asks the sub-agent to
+    # re-check and resend its whole return this many times, with no evidence, checks or verdicts.
+    blind_redelegations: int = 0
 
 
 ARMS: dict[str, ArmSpec] = {
     "sa": ArmSpec("sa", False, False, (), None, 0.0, False, "sa.json"),
     "vanilla_mad": ArmSpec("vanilla_mad", True, False, (), None, 0.0, False, "vanilla_mad.json"),
     "self_verify": ArmSpec("self_verify", True, False, (), None, 0.0, False, "vanilla_mad.json"),
+    # Plan amendment A21 (2026-10-25): vanilla_mad plus one blind re-delegation per sub-agent call, the
+    # compute control for evidence_risk's audit-driven re-delegation. Same prompts and tools as vanilla_mad.
+    "budget_matched": ArmSpec("budget_matched", True, False, (), None, 0.0, False, "budget_matched.json", 1),
     "typed": ArmSpec("typed", True, True, (), None, 0.0, False, "typed.json"),
     "evidence": ArmSpec("evidence", True, True, ("L0", "L1"), "risk", 0.0, True, "evidence_risk.json"),
     "evidence_random": ArmSpec(
@@ -45,7 +51,8 @@ ARMS: dict[str, ArmSpec] = {
     ),
 }
 
-HEADLINE_ARMS = ("sa", "vanilla_mad", "self_verify", "evidence_risk")
+# Design R (plan amendment A21, 2026-10-25). self_verify stays defined for the local grid.
+HEADLINE_ARMS = ("sa", "vanilla_mad", "evidence_risk", "budget_matched")
 
 
 def arm_spec(name: str) -> ArmSpec:

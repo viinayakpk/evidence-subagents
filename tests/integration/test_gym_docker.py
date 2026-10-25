@@ -144,6 +144,24 @@ async def test_injected_fault_on_real_output_is_sent_back_once(tmp_path: Path) -
     assert events[-1]["passed"] is True
 
 
+async def test_budget_matched_sends_every_return_back_once_and_passes(tmp_path: Path) -> None:
+    """A21: vanilla_mad plus one blind re-delegation per sub-agent call, on real gym tasks, $0."""
+    config = load_experiment("configs/experiments/gym_mock.yaml")
+    config.arms = ["budget_matched"]
+    await run_experiment(config, out_dir=tmp_path)
+    files = sorted(tmp_path.glob("*__budget_matched__*.jsonl"))
+    assert len(files) == 3
+    for path in files:
+        events = read_events(path)
+        end = events[-1]
+        assert end["type"] == "run_end" and end["passed"] is True, (path.name, end.get("eval"))
+        handoffs = [event for event in events if event["type"] == "handoff"]
+        assert [event["kind"] for event in handoffs if event["kind"] == "redelegation"] == ["redelegation", "redelegation"]
+        assert all(event.get("blind") for event in handoffs if event["kind"] == "redelegation")
+        assert [event["action"] for event in events if event["type"] == "policy"] == ["blind_redelegate"] * 2
+        assert not [event for event in events if event["type"] in ("check", "audit", "judge_call")]
+
+
 def test_pilot_config_passes_the_docker_gate() -> None:
     config = load_experiment("configs/experiments/pilot_deepseek.yaml")
     assert config.environment == "docker"

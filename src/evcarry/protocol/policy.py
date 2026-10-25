@@ -82,6 +82,21 @@ def feedback_message(decision: PolicyDecision) -> str:
     return "\n".join(lines)
 
 
+def blind_redelegation_message() -> str:
+    """The budget_matched arm's re-delegation (A21): the evidence arm's message shape, with no verdict.
+
+    It keeps ``feedback_message``'s opening line, its rule against repeating actions and its reply
+    instruction, but names no claim, no check and no reason, because that arm runs no checks.
+    """
+    return "\n".join(
+        [
+            "The harness asks every sub-agent to re-check its previous return once before it is passed on.",
+            "Do not repeat actions that already succeeded (sending, writing, creating or deleting): if your return reports such an action, check its result with a read instead.",
+            "Re-check your previous return against your tool results. Reply again in the same format with the complete return, corrected where needed; move anything you cannot support to open issues.",
+        ]
+    )
+
+
 def rejected_note(claim_id: str, reason: str) -> str:
     """The open_issues line that tells the main agent a claim was dropped."""
     return f"REJECTED {claim_id} (not verified; do not rely on it): {reason}"

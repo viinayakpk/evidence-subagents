@@ -2,18 +2,39 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+from dataclasses import dataclass
+
 from agents import ModelSettings, RunConfig
 
-# Sampling temperature for every model call in every arm and on every provider: main agent,
-# sub-agents and the L3 judge (owner decision, 2026-10-24). It is sent explicitly, so a
+# Sampling temperature of the L3 judge, and of the agents unless a run sets ``current_sampling``
+# (owner decision, 2026-10-24; agents amended by A22, 2026-10-25). It is sent explicitly, so a
 # provider default never applies; llm_call, llm_error and judge_call log the value the request
-# carried, run_start the value configured.
+# carried, run_start the values configured. The judge always uses this constant (A12 keeps it fixed).
 TEMPERATURE = 0.0
 
 
+@dataclass(frozen=True)
+class AgentSampling:
+    """What every agent call of one run sends (main agent, sub-agents, repairs, re-delegations).
+
+    ``seed`` is sent as the request's ``seed`` parameter when it is not None. OpenRouter lists ``seed``
+    for deepseek/deepseek-v4.1-flash-1017 and for every endpoint of the pinned set (A22).
+    """
+
+    temperature: float = TEMPERATURE
+    seed: int | None = None
+
+
+# Set by the run manager for the duration of one run (``runs.config.SamplingConfig``).
+current_sampling: ContextVar[AgentSampling | None] = ContextVar("evcarry_agent_sampling", default=None)
+
+
 def agent_model_settings() -> ModelSettings:
-    """``ModelSettings`` for the main agent and the sub-agents."""
-    return ModelSettings(temperature=TEMPERATURE)
+    """``ModelSettings`` for the main agent and the sub-agents: the run's sampling, else temperature 0."""
+    sampling = current_sampling.get() or AgentSampling()
+    extra = {"seed": sampling.seed} if sampling.seed is not None else None
+    return ModelSettings(temperature=sampling.temperature, extra_args=extra)
 
 
 def harness_run_config() -> RunConfig:

@@ -9,7 +9,7 @@ from agents.agent import StopAtTools
 from agents.tool import default_tool_error_function
 
 from evcarry.harness.arms import ArmSpec
-from evcarry.harness.delegate import DelegateState, make_extractor
+from evcarry.harness.delegate import DelegateState, make_blind_extractor, make_extractor
 from evcarry.harness.handoffs import traced_handoff
 from evcarry.harness.hooks import LedgerHooks
 from evcarry.harness.prompts import SUBAGENT_TOOL_DESCRIPTIONS, prompt_text, subagent_instructions, subagent_tool_block
@@ -154,6 +154,17 @@ def build_main_agent(
                 max_turns=subagent_max_turns,
                 judge=judge,
                 prompts_dir=prompts_dir,
+                session=session,
+            )
+        elif arm.blind_redelegations:
+            extractor = make_blind_extractor(
+                agent=sub,
+                hooks=hooks,
+                writer=writer,
+                arm=arm.name,
+                state=state,
+                max_turns=subagent_max_turns,
+                redelegations=arm.blind_redelegations,
                 session=session,
             )
         sub_tools.append(

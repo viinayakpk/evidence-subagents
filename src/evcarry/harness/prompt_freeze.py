@@ -42,7 +42,13 @@ def rendered_prompts(prompts_dir: str | Path) -> dict[str, str]:
     from evcarry.env.gym_tools import CLAIM_DONE_META, PYTHON_EXECUTE_META
     from evcarry.harness.tools import OVERLONG_META, ToolMeta, display_text
     from evcarry.protocol.judge import JUDGE_PROMPT
-    from evcarry.protocol.policy import PolicyDecision, fallback_message, feedback_message, rejected_note
+    from evcarry.protocol.policy import (
+        PolicyDecision,
+        blind_redelegation_message,
+        fallback_message,
+        feedback_message,
+        rejected_note,
+    )
 
     texts: dict[str, str] = {}
     for name, spec in sorted(ARMS.items()):
@@ -57,6 +63,7 @@ def rendered_prompts(prompts_dir: str | Path) -> dict[str, str]:
     decision = PolicyDecision(action="redelegate", rejected=True, failed_claims=["<claim>"], reasons=["<claim>: <reason>"])
     texts["message/repair"] = repair_prompt(prompts_dir, "<parse error>")
     texts["message/redelegate"] = feedback_message(decision)
+    texts["message/blind_redelegate"] = blind_redelegation_message()
     texts["message/fallback"] = fallback_message("<subagent>", decision)
     texts["message/rejected_claim"] = rejected_note("<claim>", "<reason>")
     example = {

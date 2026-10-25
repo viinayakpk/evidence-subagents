@@ -3,7 +3,7 @@
 Each task has one plan: read-only calls (the researcher's), write calls (the
 operator's), and the claims each sub-agent returns. The plan is rendered three
 ways: ``sa`` (the main agent makes every call), ``vanilla_mad`` (sub-agents
-reply in free text) and ``evidence_risk`` (sub-agents reply with claims that
+reply in free text), ``budget_matched`` (vanilla_mad plus a reply to the blind re-delegation) and ``evidence_risk`` (sub-agents reply with claims that
 cite their call ids). Spans and values were checked against the gym ed735ba
 database; the scripts solve the tasks, so the gym's own evaluation passes.
 
@@ -243,6 +243,12 @@ def subagent_return(subagent_id: str, claims: list[dict]) -> str:
 
 
 def render(plan: dict, arm: str) -> dict:
+    if arm == "budget_matched":
+        # vanilla_mad plus the reply to the harness's one blind re-delegation (A21): the same text again.
+        rendered = render(plan, "vanilla_mad")
+        rendered["agents"]["researcher"].append({"content": plan["research_text"]})
+        rendered["agents"]["operator"].append({"content": plan["operate_text"]})
+        return rendered
     if arm == "sa":
         return {"agents": {"main": [*plan["reads"], *plan["writes"], DONE]}}
     structured = arm == "evidence_risk"
@@ -263,7 +269,7 @@ def render(plan: dict, arm: str) -> dict:
 
 def main() -> None:
     usage = {"input_tokens": 1200, "cached_tokens": 900, "output_tokens": 150}
-    for arm in ("sa", "vanilla_mad", "evidence_risk"):
+    for arm in ("sa", "vanilla_mad", "evidence_risk", "budget_matched"):
         payload = {
             "served_model": "mock-scripted",
             "usage": usage,

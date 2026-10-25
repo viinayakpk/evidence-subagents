@@ -84,7 +84,10 @@ def test_freeze_detects_file_and_code_changes(tmp_path: Path, monkeypatch) -> No
     (prompts / "return_text.md").write_text("Reply however you like.\n", encoding="utf-8")
     changed = prompt_freeze.status(prompts)
     assert changed.state == "changed"
-    assert changed.changed == ["arm/vanilla_mad/operator", "arm/vanilla_mad/researcher"]
+    assert changed.changed == [
+        "arm/budget_matched/operator", "arm/budget_matched/researcher",  # same return format as vanilla_mad (A21)
+        "arm/vanilla_mad/operator", "arm/vanilla_mad/researcher",
+    ]
     shutil.copy(Path(GYM) / "return_text.md", prompts / "return_text.md")
     assert prompt_freeze.status(prompts).state == "match"
     monkeypatch.setitem(SUBAGENT_TOOL_DESCRIPTIONS, "researcher", "Researcher: gathers evidence and returns claims.")

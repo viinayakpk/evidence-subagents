@@ -34,7 +34,7 @@ from evcarry.inject.corruptions import CorruptionError
 from evcarry.inject.injector import FaultInjector
 from evcarry.protocol.audit import audit_return
 from evcarry.protocol.judge import LexicalJudge, current_audit
-from evcarry.protocol.policy import decide, fallback_message, feedback_message, rejected_note
+from evcarry.protocol.policy import blind_redelegation_message, decide, fallback_message, feedback_message, rejected_note
 from evcarry.protocol.schema import Claim, FailedReturn, SubagentReturn, parse_subagent_return
 from evcarry.trace.writer import JsonlWriter
 
@@ -242,5 +242,51 @@ def make_extractor(
 
     async def extractor(run_result: Any) -> str:
         return await _review(run_result, prior=0)
+
+    return extractor
+
+
+def make_blind_extractor(
+    *,
+    agent: Any,
+    hooks: LedgerHooks,
+    writer: JsonlWriter,
+    arm: str,
+    state: DelegateState,
+    max_turns: int,
+    redelegations: int = 1,
+    session: Any = None,
+):
+    """budget_matched (A21): every sub-agent return is sent back ``redelegations`` times, blind.
+
+    The re-delegation runs as evidence_risk's does (``Runner.run`` on the same agent and session, the
+    same turn limit and run config), with ``blind_redelegation_message`` instead of a verdict. No claim
+    schema, check, audit or judge is involved, and the last reply is what the main agent gets.
+    """
+
+    async def extractor(run_result: Any) -> str:
+        name = getattr(agent, "name", None)
+        text = _as_text(run_result.final_output)
+        write_handoff(writer, "subagent_output", text, subagent=name)
+        for round_ in range(redelegations):
+            index = state.return_index
+            state.return_index += 1
+            writer.write({"type": "policy", "arm": arm, "return_index": index, "prior": round_,
+                          "action": "blind_redelegate", "rejected": False, "failed_claims": [], "reasons": [],
+                          "accepted_claims": []})
+            message = blind_redelegation_message()
+            write_handoff(writer, "redelegation", message, subagent=name, return_index=index, blind=True)
+            run_result = await Runner.run(
+                agent,
+                _continued(run_result, message, session),
+                hooks=hooks,
+                max_turns=max_turns,
+                run_config=harness_run_config(),
+                session=session,
+            )
+            text = _as_text(run_result.final_output)
+            write_handoff(writer, "subagent_output", text, subagent=name, redelegated=True)
+        state.return_index += 1
+        return text
 
     return extractor
