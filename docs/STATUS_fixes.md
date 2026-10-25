@@ -229,3 +229,16 @@ Run on the PC after the edits above, with no paid call:
 - `make gym-images`: rebuilt `evcarry/toolathlon-gym:ed735ba` with label `evcarry.overlay=offline-v1`; every baked uv server passed its offline start check; the Notion patch marker is in the built `pg-client.js` and `bin/cli.mjs`.
 - `pytest tests/integration/test_gym_docker.py -m docker_gym -v`: 39 passed (no route out on the internal network, Postgres reachable, every server starts offline with the task dir hidden, mock sites keep serving, grading after restore).
 - `scripts/recheck_pilot.py`: 15 of the 64 rejected returns clear offline, and no accepted return would now be rejected. Most of the rest are meta claims that only A5 can change, in new runs.
+
+## After the first dev run (2026-10-25, morning)
+
+Free work after `runs/dev_verify_v1` (`docs/DEV_CHECK_REVIEW.md`), no paid call:
+
+| item | change | where | tests |
+| --- | --- | --- | --- |
+| fix | A cited call id without its provider prefix resolves when exactly one recorded id ends in it | `ledger/ledger.py` | `test_ledger_prefix.py` |
+| fix | run_end `status` is `contaminated` for a graded contaminated run; the grader's status is in `eval_status` | `runs/manager.py` | `test_run_status.py` |
+| fix | A span matches a Python repr that doubled its backslashes | `protocol/checks.py` | `test_span_backslashes.py` |
+| A13 | Dev rule drops a task whose grader imports a module the grading Python lacks; `tasks/dev.txt` = sf-sales-trip + gcal-snowflake-deadline-tracker; headline60 unchanged | `env/task_rules.py`, `scripts/apply_task_rules.py`, `scripts/grading_modules.sh`, `tests/fixtures/gym/grading_python_modules.txt`, `tasks/*`, `docs/TASK_RULES.md` | `test_task_rules.py` (3 new or changed) |
+| A14 | Detector also flags catalog searches for grader-like names, package scans for benchmark names, and web or index lookups of the benchmark | `env/contamination.py` | `test_contamination_a14.py` |
+| config | `dev_verify.yaml` writes `runs/dev_verify_v2` (not run) | `configs/experiments/dev_verify.yaml` | `test_limits_context.py` |
