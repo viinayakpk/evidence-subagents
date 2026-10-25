@@ -49,3 +49,8 @@ No overrun risk: the cap counts billed dollars and refuses every model call once
 ## 6. Seed 1 projection (60 tasks x 4 arms)
 
 At the dev run's per-run means (sa 0.024, vanilla 0.014, self_verify 0.014, evidence 0.079): about $7.9. The registered projection from the pilot's mix: $28.2. The dev tasks were cheap and DeepInfra served most calls, so expect $8-28; a $30 cap holds at the registered projection.
+
+## Later findings (2026-10-25, morning, free)
+
+- **The first A14 detector draft over-flagged.** It counted the task database's name `toolathlon_gym` (in every psycopg2 connection) as a benchmark name next to an `information_schema` query. Offline over the pilot it moved 9 runs from none to attempted and would have voided 5 grader passes. Corrected before commit (7f2b61e): toolathlon is not a database search term, and `toolathlon_gym`, `toolathlon_pg` and the user `eigent` are not benchmark lookups; tests cover these negatives. With the corrected detector no pilot run changes tier (25 none, 10 attempted, 0 obtained before and after), and the dev run's flagged evidence run goes from 4 to 10 flagged calls.
+- **The pilot graded sf-hr-compensation-pdf-notion without its PDF.** Its grader imports PyPDF2, which the grading Python lacks; it catches the ImportError, prints `[WARN] PDF content extraction error: No module named 'PyPDF2'`, skips the PDF content check, and still passed vanilla_mad and self_verify. This is a pilot10 task, so the headline is not affected, but its pilot results must be reported as graded without the PDF check. A13's import rule flags it with three other pool tasks (`docs/TASK_RULES.md` section 4).
