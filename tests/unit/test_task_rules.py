@@ -138,9 +138,12 @@ def test_the_pre_registered_split_and_the_dev_rule() -> None:
     assert len(headline) == 60 and not set(headline) & set(pilot) and set(headline) | set(pilot) == set(subset)
     dev = load_task_list(ROOT / "tasks" / "dev.txt")
     facts = {name: task_facts(name) for name in pool}
-    assert dev == dev_tasks(pool, subset, pilot, facts) == ["train-sf-sales-trip-excel-word-email", "sf-support-metrics-pdf-email"]
+    # A13 (2026-10-25): sf-support-metrics-pdf-email's grader needs PDF libraries the grading Python lacks.
+    assert dev == dev_tasks(pool, subset, pilot, facts) == ["train-sf-sales-trip-excel-word-email", "gcal-snowflake-deadline-tracker"]
+    assert facts["sf-support-metrics-pdf-email"].grader_missing_modules == ("PyPDF2", "fitz", "pdfplumber", "pypdf")
     assert not set(dev) & set(subset)
     assert all(facts[name].email_defect is None and facts[name].sa_tools <= 150 for name in dev)
+    assert all(not facts[name].grader_missing_modules for name in dev)
     assert dev_key(dev[0]) < dev_key(dev[1])
     # The rule on synthetic facts: excluded lists, defects and tool counts are skipped; the lowest keys win.
     synthetic = {
@@ -152,6 +155,40 @@ def test_the_pre_registered_split_and_the_dev_rule() -> None:
     }
     chosen = dev_tasks(list(synthetic), ["in-subset"], ["in-pilot"], synthetic, count=2)
     assert chosen == sorted(["a", "b", "c"], key=dev_key)[:2]
+    # A13: a grader that imports a module the grading Python lacks is skipped.
+    lowest = chosen[0]
+    synthetic[lowest] = TaskFacts(**{**synthetic[lowest].__dict__, "grader_missing_modules": ("fitz",)})
+    assert lowest not in dev_tasks(list(synthetic), ["in-subset"], ["in-pilot"], synthetic, count=2)
+
+
+def test_grader_imports_are_checked_against_the_grading_python(tmp_path: Path) -> None:
+    """A13: every absolute import counts, also inside try; the grader's own files and stdlib do not."""
+    from evcarry.env.task_rules import grader_missing_modules, grading_modules
+
+    have = grading_modules()
+    assert {"psycopg2", "openpyxl", "docx", "pptx", "utils", "tasks", "json"} <= have
+    assert not {"fitz", "pypdf", "PyPDF2", "pdfplumber"} & have
+    evaluation = tmp_path / "evaluation"
+    evaluation.mkdir()
+    (evaluation / "helpers.py").write_text("import json\n", encoding="utf-8")
+    (evaluation / "main.py").write_text(
+        "import os, sys\nimport psycopg2\nfrom openpyxl import load_workbook\nfrom . import helpers\nimport helpers\n"
+        "try:\n    import fitz\nexcept ImportError:\n    fitz = None\nfrom pypdf.errors import PdfReadError\n",
+        encoding="utf-8",
+    )
+    assert grader_missing_modules(tmp_path) == ("fitz", "pypdf")
+    assert grader_missing_modules(tmp_path / "no-such-task") == ()
+
+
+def test_no_headline_grader_imports_a_missing_module() -> None:
+    from evcarry.env.task_rules import grader_missing_modules
+    from evcarry.env.toolathlon import gym_task_root
+
+    root = gym_task_root()
+    headline = load_task_list(ROOT / "tasks" / "headline60.txt")
+    if not (root / headline[0]).is_dir():
+        pytest.skip("toolathlon_gym submodule is not checked out")
+    assert {name: grader_missing_modules(root / name) for name in headline if grader_missing_modules(root / name)} == {}
 
 
 def test_the_docx_table_rule_flags_only_the_known_defect_in_subset70(tmp_path: Path) -> None:

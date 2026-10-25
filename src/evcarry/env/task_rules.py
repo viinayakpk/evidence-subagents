@@ -38,6 +38,12 @@ primary analysis. Fixes are verified on dev tasks drawn by a seeded rule from
 pool160 minus subset70 (never pilot10): no email defect, at most 150 SA tools (the
 verified tool limit), the first ``DEV_COUNT`` in ascending order of
 ``sha256("evcarry-dev-v1|" + task)`` (``tasks/dev.txt``).
+
+Dev amendment (2026-10-25, plan A13, before any headline run): a dev task's grader
+must import only modules the grading Python has (``GRADING_MODULES``, listed from the
+agent image by ``scripts/grading_modules.sh``). ``sf-support-metrics-pdf-email`` imports
+four PDF libraries, none installed, and fell back to raw PDF bytes, so it failed four
+correct PDFs in the first dev run. Every import counts, also one inside ``try``.
 """
 
 from __future__ import annotations
@@ -67,6 +73,7 @@ DEV_SALT = "evcarry-dev-v1"
 # DeepInfra took 150 tools in one request (docs/TASK_RULES.md section 1); more is unverified.
 DEV_TOOL_LIMIT = 150
 DEV_COUNT = 2
+GRADING_MODULES = "tests/fixtures/gym/grading_python_modules.txt"
 
 EMAIL_CONFIG_WITHOUT_PASSWORD = "email_config_without_password"
 EMAIL_CONFIG_INVALID = "email_config_invalid"
@@ -92,6 +99,8 @@ class TaskFacts:
     required_senders: tuple[str, ...]
     email_defect: str | None
     primary_servers: tuple[str, ...] = ()
+    # Modules the grader imports that the grading Python lacks (A13); empty when it can run.
+    grader_missing_modules: tuple[str, ...] = ()
 
     @property
     def n_servers(self) -> int:
@@ -251,7 +260,38 @@ def task_facts(name: str, root: Path | None = None) -> TaskFacts:
         required_senders=tuple(sorted(required)),
         email_defect=defect,
         primary_servers=primary_servers(domain, root),
+        grader_missing_modules=grader_missing_modules(task_dir),
     )
+
+
+@cache
+def grading_modules(path: str = GRADING_MODULES) -> frozenset[str]:
+    """Top-level module names the grading Python can import (the committed list from the image)."""
+    text = resolve_repo_path(path).read_text(encoding="utf-8")
+    return frozenset(line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#"))
+
+
+def grader_imports(task_dir: Path) -> set[str]:
+    """Top-level names of every absolute import in the task's ``evaluation/`` code, inside ``try`` or not."""
+    found: set[str] = set()
+    for path in sorted((task_dir / "evaluation").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                found.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                found.add(node.module.split(".")[0])
+    return found
+
+
+def grader_missing_modules(task_dir: Path, available: frozenset[str] | None = None) -> tuple[str, ...]:
+    """The grader's imports that are neither in the grading Python nor files of its own ``evaluation/``."""
+    if not (task_dir / "evaluation").is_dir():
+        return ()
+    have = grading_modules() if available is None else available
+    local = {path.stem for path in (task_dir / "evaluation").rglob("*.py")}
+    local |= {path.name for path in (task_dir / "evaluation").rglob("*") if path.is_dir()}
+    return tuple(sorted(name for name in grader_imports(task_dir) if name not in have and name not in local))
 
 
 def needs_delegation(facts: TaskFacts) -> bool:
@@ -341,11 +381,15 @@ def dev_key(name: str) -> str:
 def dev_tasks(
     pool: list[str], subset: list[str], pilot: list[str], facts: dict[str, TaskFacts], count: int = DEV_COUNT
 ) -> list[str]:
-    """Fix-verification tasks: pool160 minus subset70 and pilot10, no email defect, at most 150 SA tools, by ``dev_key``."""
+    """Fix-verification tasks: pool160 minus subset70 and pilot10, no email defect, at most 150 SA tools, a grader
+    the grading Python can run (A13), by ``dev_key``."""
     excluded = set(subset) | set(pilot)
     candidates = [
         name
         for name in pool
-        if name not in excluded and facts[name].email_defect is None and facts[name].sa_tools <= DEV_TOOL_LIMIT
+        if name not in excluded
+        and facts[name].email_defect is None
+        and facts[name].sa_tools <= DEV_TOOL_LIMIT
+        and not facts[name].grader_missing_modules
     ]
     return sorted(candidates, key=dev_key)[:count]

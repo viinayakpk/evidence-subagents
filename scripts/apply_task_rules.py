@@ -103,8 +103,8 @@ def headline_bytes(names: list[str]) -> bytes:
 def dev_bytes(names: list[str]) -> bytes:
     freeze = _freeze_module()
     lines = [
-        f"# dev tasks: {DEV_SALT} over pool160 minus subset70 (no email defect, at most {DEV_TOOL_LIMIT} SA tools), "
-        "lowest sha256 first",
+        f"# dev tasks: {DEV_SALT} over pool160 minus subset70 (no email defect, at most {DEV_TOOL_LIMIT} SA tools, "
+        "grader runs in the grading Python [A13, 2026-10-25]), lowest sha256 first",
         f"# gym {freeze.GYM_COMMIT}",
     ]
     return "\n".join([*lines, *names, ""]).encode("utf-8")
@@ -195,6 +195,7 @@ def outputs() -> tuple[dict[str, bytes], list]:
         f"split={SPLIT_VERSION} (primary headline = subset70 minus pilot10, tasks/headline60.txt; "
         "pilot10 reported separately; fixes verified on tasks/dev.txt)",
         f"dev_rule={DEV_SALT}: pool160 minus subset70, no email defect, at most {DEV_TOOL_LIMIT} SA tools, "
+        "a grader whose imports the grading Python has (A13, 2026-10-25), "
         f'the first {DEV_COUNT} by sha256("{DEV_SALT}|" + task)',
     ]
     files["tasks/FROZEN.txt"] = ("\n".join(kept) + "\n").encode("utf-8")

@@ -1,4 +1,4 @@
-# dev tasks: evcarry-dev-v1 over pool160 minus subset70 (no email defect, at most 150 SA tools), lowest sha256 first
+# dev tasks: evcarry-dev-v1 over pool160 minus subset70 (no email defect, at most 150 SA tools, grader runs in the grading Python [A13, 2026-10-25]), lowest sha256 first
 # gym ed735ba0af71d82688a55f952a6ea11479ae7206
 train-sf-sales-trip-excel-word-email
-sf-support-metrics-pdf-email
+gcal-snowflake-deadline-tracker

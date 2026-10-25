@@ -96,13 +96,15 @@ File: `tasks/delegation_labels.csv` (every gym task, with list membership).
 Written after the M4 pilot and before any headline run (plan amendment A1). Every pilot10 task is in subset70, and the fixes made after the pilot were found on pilot10's traces. So:
 
 - **Primary headline:** subset70 minus pilot10, 60 tasks (`tasks/headline60.txt`, sha256 `0cc37a56…`). pilot10 is reported separately and never pooled into the primary analysis.
-- **Dev tasks** (fix verification): from pool160 minus subset70 (so never pilot10), keep tasks with no email defect and at most 150 SA tools (the verified tool limit, section 1), sort by `sha256("evcarry-dev-v1|" + task)`, take the first 2 (`tasks/dev.txt`, sha256 `e5128143…`):
+- **Dev tasks** (fix verification): from pool160 minus subset70 (so never pilot10), keep tasks with no email defect, at most 150 SA tools (the verified tool limit, section 1) and, from amendment A13 (2026-10-25, after the first dev run), a grader whose imports the grading Python has; sort by `sha256("evcarry-dev-v1|" + task)`, take the first 2 (`tasks/dev.txt`, sha256 `5aac1122…`; it was `e5128143…` before A13):
 
 | rank | task | servers | SA tools | sha256 prefix |
 | --- | --- | --- | --- | --- |
 | 1 | train-sf-sales-trip-excel-word-email | 6 | 143 | 00c29ae7 |
-| 2 | sf-support-metrics-pdf-email | 4 | 65 | 09035320 |
-| (next) | gcal-snowflake-deadline-tracker | 6 | 105 | 0cf87e88 |
+| (dropped by A13) | sf-support-metrics-pdf-email | 4 | 65 | 09035320 |
+| 2 | gcal-snowflake-deadline-tracker | 6 | 105 | 0cf87e88 |
+
+A13 compares every absolute import in a task's `evaluation/` code (also inside `try`) with `tests/fixtures/gym/grading_python_modules.txt`, the top-level modules `/opt/venv/bin/python3` can import from `/workspace` in the agent image (`scripts/grading_modules.sh`). In pool160 it flags four tasks, all over PDF libraries (fitz, pypdf, PyPDF2, pdfplumber): `sf-support-metrics-pdf-email` (dev rank 2, dropped), `sf-hr-compensation-pdf-notion` (pilot10: its grader catches the ImportError, prints a warning and skips the PDF content check, so the pilot graded that task without its PDF), `sf-sales-region-pdf-gsheet` and `sf-sales-segment-word` (pool only). No headline60 or other subset70 task is flagged. `gcal-snowflake-deadline-tracker`'s grader was run offline in the image against the task database: it imports cleanly and fails cleanly (empty workspace: 1 of 13 checks pass; the ground-truth workbook: its Excel checks pass, 28 of 39 in all, the rest need the task's own calendar, Notion and e-mail actions).
 
 53 pool160 tasks outside subset70 qualify. Code: `task_rules.headline_tasks`, `task_rules.dev_tasks`; `scripts/apply_task_rules.py` writes both lists, their hashes in `tasks/SHA256SUMS`, and the `split=` and `dev_rule=` lines of `tasks/FROZEN.txt`; `--check` verifies them.
 
