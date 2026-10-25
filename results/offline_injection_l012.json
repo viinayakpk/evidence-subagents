@@ -1,0 +1,446 @@
+{
+  "dev_verify_v1": {
+    "claims": 351,
+    "runs": [
+      "dev_verify_v1/sf-support-metrics-pdf-email",
+      "dev_verify_v1/train-sf-sales-trip-excel-word-email"
+    ],
+    "unmodified": {
+      "n": 351,
+      "first_L0": 0,
+      "cum_L0": 0.0,
+      "first_L1": 5,
+      "cum_L1": 0.014,
+      "first_L2": 0,
+      "cum_L2": 0.014
+    },
+    "unmodified_by_kind": {
+      "action_done": {
+        "n": 4
+      },
+      "artifact": {
+        "n": 5,
+        "L1": 1
+      },
+      "derived": {
+        "n": 22
+      },
+      "fact": {
+        "n": 320,
+        "L1": 4
+      }
+    },
+    "clean_claims": 346,
+    "l2_not_checkable_offline": 1,
+    "levels": [
+      "L0",
+      "L1",
+      "L2"
+    ],
+    "faults": {
+      "numeric_change/naive": {
+        "n": 154,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 21,
+        "cum_L1": 0.136,
+        "first_L2": 0,
+        "cum_L2": 0.136,
+        "missed": 133,
+        "missed_value_left_to_L3": 131
+      },
+      "fabricated_row/naive": {
+        "n": 245,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 48,
+        "cum_L1": 0.196,
+        "first_L2": 0,
+        "cum_L2": 0.196,
+        "missed": 197,
+        "missed_value_left_to_L3": 197
+      },
+      "wrong_pointer/naive": {
+        "n": 346,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 343,
+        "cum_L1": 0.991,
+        "first_L2": 0,
+        "cum_L2": 0.991,
+        "missed": 3,
+        "missed_value_left_to_L3": 3
+      },
+      "wrong_pointer/consistent": {
+        "n": 346,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 48,
+        "cum_L1": 0.139,
+        "first_L2": 0,
+        "cum_L2": 0.139,
+        "missed": 298,
+        "missed_value_left_to_L3": 298
+      },
+      "false_done/naive": {
+        "n": 346,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 346,
+        "cum_L1": 1.0,
+        "first_L2": 0,
+        "cum_L2": 1.0,
+        "missed": 0,
+        "missed_value_left_to_L3": 0
+      },
+      "false_done/consistent": {
+        "n": 346,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 346,
+        "cum_L1": 1.0,
+        "first_L2": 0,
+        "cum_L2": 1.0,
+        "missed": 0,
+        "missed_value_left_to_L3": 0
+      }
+    }
+  },
+  "dev_verify_v2": {
+    "claims": 292,
+    "runs": [
+      "dev_verify_v2/gcal-snowflake-deadline-tracker",
+      "dev_verify_v2/train-sf-sales-trip-excel-word-email"
+    ],
+    "unmodified": {
+      "n": 292,
+      "first_L0": 0,
+      "cum_L0": 0.0,
+      "first_L1": 2,
+      "cum_L1": 0.007,
+      "first_L2": 0,
+      "cum_L2": 0.007
+    },
+    "unmodified_by_kind": {
+      "action_done": {
+        "n": 13
+      },
+      "derived": {
+        "n": 20
+      },
+      "fact": {
+        "n": 259,
+        "L1": 2
+      }
+    },
+    "clean_claims": 290,
+    "l2_not_checkable_offline": 1,
+    "levels": [
+      "L0",
+      "L1",
+      "L2"
+    ],
+    "faults": {
+      "numeric_change/naive": {
+        "n": 76,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 36,
+        "cum_L1": 0.474,
+        "first_L2": 0,
+        "cum_L2": 0.474,
+        "missed": 40,
+        "missed_value_left_to_L3": 28
+      },
+      "fabricated_row/naive": {
+        "n": 210,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 106,
+        "cum_L1": 0.505,
+        "first_L2": 0,
+        "cum_L2": 0.505,
+        "missed": 104,
+        "missed_value_left_to_L3": 103
+      },
+      "wrong_pointer/naive": {
+        "n": 290,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 290,
+        "cum_L1": 1.0,
+        "first_L2": 0,
+        "cum_L2": 1.0,
+        "missed": 0,
+        "missed_value_left_to_L3": 0
+      },
+      "wrong_pointer/consistent": {
+        "n": 290,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 107,
+        "cum_L1": 0.369,
+        "first_L2": 0,
+        "cum_L2": 0.369,
+        "missed": 183,
+        "missed_value_left_to_L3": 183
+      },
+      "false_done/naive": {
+        "n": 290,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 290,
+        "cum_L1": 1.0,
+        "first_L2": 0,
+        "cum_L2": 1.0,
+        "missed": 0,
+        "missed_value_left_to_L3": 0
+      },
+      "false_done/consistent": {
+        "n": 290,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 290,
+        "cum_L1": 1.0,
+        "first_L2": 0,
+        "cum_L2": 1.0,
+        "missed": 0,
+        "missed_value_left_to_L3": 0
+      }
+    }
+  },
+  "pilot_deepseek": {
+    "claims": 361,
+    "runs": [
+      "pilot_deepseek/canvas-module-completion-notion-gcal",
+      "pilot_deepseek/canvas-quiz-analysis-ppt",
+      "pilot_deepseek/fetch-sf-hr-training-notion-gcal-excel",
+      "pilot_deepseek/howtocook-weekly-gsheet-gcal",
+      "pilot_deepseek/sf-hr-compensation-pdf-notion",
+      "pilot_deepseek/sf-sales-region-analysis-gsheet-email",
+      "pilot_deepseek/terminal-arxiv-latex-excel-word-notion",
+      "pilot_deepseek/wc-shipping-analysis"
+    ],
+    "unmodified": {
+      "n": 361,
+      "first_L0": 6,
+      "cum_L0": 0.017,
+      "first_L1": 29,
+      "cum_L1": 0.097,
+      "first_L2": 0,
+      "cum_L2": 0.097
+    },
+    "unmodified_by_kind": {
+      "action_done": {
+        "n": 62,
+        "L1": 5
+      },
+      "derived": {
+        "n": 147,
+        "L0": 2,
+        "L1": 2
+      },
+      "fact": {
+        "n": 152,
+        "L1": 22,
+        "L0": 4
+      }
+    },
+    "clean_claims": 326,
+    "l2_not_checkable_offline": 0,
+    "levels": [
+      "L0",
+      "L1",
+      "L2"
+    ],
+    "faults": {
+      "numeric_change/naive": {
+        "n": 54,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 12,
+        "cum_L1": 0.222,
+        "first_L2": 0,
+        "cum_L2": 0.222,
+        "missed": 42,
+        "missed_value_left_to_L3": 41
+      },
+      "fabricated_row/naive": {
+        "n": 121,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 41,
+        "cum_L1": 0.339,
+        "first_L2": 0,
+        "cum_L2": 0.339,
+        "missed": 80,
+        "missed_value_left_to_L3": 78
+      },
+      "wrong_pointer/naive": {
+        "n": 326,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 306,
+        "cum_L1": 0.939,
+        "first_L2": 0,
+        "cum_L2": 0.939,
+        "missed": 20,
+        "missed_value_left_to_L3": 20
+      },
+      "wrong_pointer/consistent": {
+        "n": 326,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 42,
+        "cum_L1": 0.129,
+        "first_L2": 0,
+        "cum_L2": 0.129,
+        "missed": 284,
+        "missed_value_left_to_L3": 283
+      },
+      "false_done/naive": {
+        "n": 326,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 326,
+        "cum_L1": 1.0,
+        "first_L2": 0,
+        "cum_L2": 1.0,
+        "missed": 0,
+        "missed_value_left_to_L3": 0
+      },
+      "false_done/consistent": {
+        "n": 326,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 326,
+        "cum_L1": 1.0,
+        "first_L2": 0,
+        "cum_L2": 1.0,
+        "missed": 0,
+        "missed_value_left_to_L3": 0
+      }
+    }
+  },
+  "all": {
+    "claims": 1004,
+    "runs": [
+      "dev_verify_v1/sf-support-metrics-pdf-email",
+      "dev_verify_v1/train-sf-sales-trip-excel-word-email",
+      "dev_verify_v2/gcal-snowflake-deadline-tracker",
+      "dev_verify_v2/train-sf-sales-trip-excel-word-email",
+      "pilot_deepseek/canvas-module-completion-notion-gcal",
+      "pilot_deepseek/canvas-quiz-analysis-ppt",
+      "pilot_deepseek/fetch-sf-hr-training-notion-gcal-excel",
+      "pilot_deepseek/howtocook-weekly-gsheet-gcal",
+      "pilot_deepseek/sf-hr-compensation-pdf-notion",
+      "pilot_deepseek/sf-sales-region-analysis-gsheet-email",
+      "pilot_deepseek/terminal-arxiv-latex-excel-word-notion",
+      "pilot_deepseek/wc-shipping-analysis"
+    ],
+    "unmodified": {
+      "n": 1004,
+      "first_L0": 6,
+      "cum_L0": 0.006,
+      "first_L1": 36,
+      "cum_L1": 0.042,
+      "first_L2": 0,
+      "cum_L2": 0.042
+    },
+    "unmodified_by_kind": {
+      "action_done": {
+        "n": 79,
+        "L1": 5
+      },
+      "artifact": {
+        "n": 5,
+        "L1": 1
+      },
+      "derived": {
+        "n": 189,
+        "L0": 2,
+        "L1": 2
+      },
+      "fact": {
+        "n": 731,
+        "L1": 28,
+        "L0": 4
+      }
+    },
+    "clean_claims": 962,
+    "l2_not_checkable_offline": 2,
+    "levels": [
+      "L0",
+      "L1",
+      "L2"
+    ],
+    "faults": {
+      "numeric_change/naive": {
+        "n": 284,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 69,
+        "cum_L1": 0.243,
+        "first_L2": 0,
+        "cum_L2": 0.243,
+        "missed": 215,
+        "missed_value_left_to_L3": 200
+      },
+      "fabricated_row/naive": {
+        "n": 576,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 195,
+        "cum_L1": 0.339,
+        "first_L2": 0,
+        "cum_L2": 0.339,
+        "missed": 381,
+        "missed_value_left_to_L3": 378
+      },
+      "wrong_pointer/naive": {
+        "n": 962,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 939,
+        "cum_L1": 0.976,
+        "first_L2": 0,
+        "cum_L2": 0.976,
+        "missed": 23,
+        "missed_value_left_to_L3": 23
+      },
+      "wrong_pointer/consistent": {
+        "n": 962,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 197,
+        "cum_L1": 0.205,
+        "first_L2": 0,
+        "cum_L2": 0.205,
+        "missed": 765,
+        "missed_value_left_to_L3": 764
+      },
+      "false_done/naive": {
+        "n": 962,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 962,
+        "cum_L1": 1.0,
+        "first_L2": 0,
+        "cum_L2": 1.0,
+        "missed": 0,
+        "missed_value_left_to_L3": 0
+      },
+      "false_done/consistent": {
+        "n": 962,
+        "first_L0": 0,
+        "cum_L0": 0.0,
+        "first_L1": 962,
+        "cum_L1": 1.0,
+        "first_L2": 0,
+        "cum_L2": 1.0,
+        "missed": 0,
+        "missed_value_left_to_L3": 0
+      }
+    }
+  }
+}
