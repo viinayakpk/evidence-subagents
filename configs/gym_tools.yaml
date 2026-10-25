@@ -50,7 +50,10 @@ nondeterministic:
   howtocook: [mcp_howtocook_recommendMeals, mcp_howtocook_whatToEat]
   pdf-tools: [search_pdf_next_page, search_pdf_prev_page, search_pdf_go_page]
   youtube: [channels_navigateList]
-  emails: [get_unread_count, get_mailbox_stats]
+  # read_email is stateful (C8, 2026-10-25): it marks the message read (emails-mcp email_service.read_email),
+  # so an L2 replay would change the mailbox only in the evidence arm. Listed here, L2 never replays it;
+  # it stays read-only, so the researcher keeps it in every delegating arm.
+  emails: [get_unread_count, get_mailbox_stats, read_email]
   # Annotated readOnlyHint=true, but it (re)loads the file into the server's
   # presentation table: replayed with the same id it would discard the operator's
   # unsaved edits to that presentation, and without an id it returns a new id.
