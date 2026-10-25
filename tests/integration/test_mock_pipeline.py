@@ -149,10 +149,14 @@ async def test_restart_counts_spend_already_logged_and_keeps_aborted_traces(tmp_
 
     monkeypatch.setattr(BudgetGuard, "check", check)
     await run_experiment(config, out_dir=tmp_path)
-    assert seen == [pytest.approx(1.2)]
+    # A19: the unfinished arm makes the (task, seed) block run again whole, so sa runs again too.
+    assert seen == [pytest.approx(1.2), pytest.approx(1.2)]
     aborted = tmp_path / f"{unfinished.name}.aborted-1"
     assert aborted.is_file() and '"cost_usd": 0.5' in aborted.read_text(encoding="utf-8")
-    assert read_events(unfinished)[-1]["type"] == "run_end"
+    assert (tmp_path / f"{finished.name}.aborted-1").is_file()
+    for path in (finished, unfinished):
+        end = read_events(path)[-1]
+        assert end["type"] == "run_end" and end["attempt"] == 2
 
 
 async def test_an_edited_frozen_task_list_is_refused(tmp_path: Path, monkeypatch) -> None:
@@ -279,7 +283,10 @@ async def test_budget_refusal_lets_running_runs_finish(tmp_path: Path, monkeypat
 
 
 async def test_a_swallowed_provider_mismatch_still_fails_the_run(tmp_path: Path, monkeypatch) -> None:
-    """A sub-agent tool or the judge can catch ProviderMismatch; the run must still fail, without run_end."""
+    """A sub-agent tool or the judge can catch ProviderMismatch; the run must still fail and stop the grid.
+
+    From A19 (2026-10-25) it ends with an infra_error run_end (passed null), so its block is re-run or dropped.
+    """
     from evcarry.providers.pin import ProviderMismatch, current_pin_guard
     from evcarry.runs import manager
 
@@ -295,8 +302,9 @@ async def test_a_swallowed_provider_mismatch_still_fails_the_run(tmp_path: Path,
         await run_experiment(config, out_dir=tmp_path)
     (trace,) = tmp_path.glob("*.jsonl")
     events = read_events(trace)
-    assert [event["type"] for event in events] == ["run_start", "run_error"]
+    assert [event["type"] for event in events] == ["run_start", "run_end"]
     assert events[-1]["error_type"] == "ProviderMismatch"
+    assert events[-1]["status"] == "infra_error" and events[-1]["passed"] is None
     assert current_pin_guard.get() is None  # the guard does not leak into the next run
 
 

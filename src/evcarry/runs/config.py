@@ -100,6 +100,8 @@ class ExperimentConfig(_Strict):
     require_frozen_prompts: bool = False
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     parallel_tasks: int = 1
+    # A19 (2026-10-25): attempts per (task, seed) block before a block hit by infrastructure errors is dropped.
+    max_block_attempts: int = Field(default=2, ge=1)
     out: str = "runs/out"
     environment: Literal["in_process", "docker"] = "in_process"
     task_root: str | None = None

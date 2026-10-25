@@ -20,6 +20,7 @@ from evcarry.inject.injector import FaultInjector
 from evcarry.protocol.schema import SubagentReturn
 from evcarry.providers.registry import ModelConfig, build_model
 from evcarry.providers.scripted import ScriptStep
+from evcarry.runs.infra import InfrastructureError, is_infrastructure_error
 from evcarry.trace.writer import JsonlWriter
 
 
@@ -59,15 +60,27 @@ def _model(
 def _logged_failure(writer: JsonlWriter, name: str):
     """``as_tool`` failure handler: trace the error, then send the SDK's default text to the model.
 
-    Without it an exception in a sub-agent run (provider error, turn limit, a
-    return still invalid after its repair, a failed replay) reaches the main
-    agent as a generic tool error and leaves nothing in the trace.
+    Without it an exception in a sub-agent run (turn limit, a return still invalid
+    after its repair, a failed replay) reaches the main agent as a generic tool
+    error and leaves nothing in the trace. An infrastructure error
+    (``runs.infra``) is traced and re-raised: it ends the run (A19).
     """
 
     def handle(ctx: Any, error: Exception) -> str:
+        infra = is_infrastructure_error(error)
         writer.write(
-            {"type": "subagent_error", "subagent": name, "error_type": type(error).__name__, "error": str(error)[:2000]}
+            {
+                "type": "subagent_error",
+                "subagent": name,
+                "error_type": type(error).__name__,
+                "error": str(error)[:2000],
+                "infrastructure": infra,
+            }
         )
+        if infra:
+            # C1 (A19): a provider-route failure ends the run in every arm, as it does in SA's main agent;
+            # it is not handed to the main agent as a tool error.
+            raise InfrastructureError(f"sub-agent {name}: {type(error).__name__}: {error}"[:1000]) from error
         return default_tool_error_function(ctx, error)
 
     return handle

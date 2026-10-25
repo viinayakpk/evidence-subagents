@@ -251,7 +251,13 @@ class LlmJudge:
             raise
         except (ValidationError, ValueError) as exc:
             error = f"unparseable judge reply: {exc}"[:500]
-        except Exception as exc:  # noqa: BLE001 - provider errors fall back to the lexical judge
+        except Exception as exc:  # noqa: BLE001 - other errors fall back to the lexical judge
+            from evcarry.runs.infra import is_infrastructure_error
+
+            if is_infrastructure_error(exc):
+                # A19 (2026-10-25): a provider-route failure ends the run (status infra_error) instead of
+                # silently switching this claim to the lexical judge.
+                raise
             error = f"{type(exc).__name__}: {exc}"[:500]
         latency_ms = (time.perf_counter() - started) * 1000
         take = getattr(self.model, "take_record", None)
@@ -299,6 +305,8 @@ class LlmJudge:
                     "judge_model": self.model_name,
                     **(record.provenance() if record is not None else {"served_model": None}),
                     "temperature": record.temperature if record is not None else None,
+                    # finish_reason, native_finish_reason, truncated, reasoning sent, reasoning_tokens (C9).
+                    **(record.stop_fields() if record is not None else {"finish_reason": None, "truncated": None}),
                     "judge_extra_body": self.extra_body,
                     "prompt_sha256": self.prompt_sha256,
                     "request_sha256": detail["request_sha256"],

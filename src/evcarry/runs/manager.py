@@ -46,7 +46,7 @@ from evcarry.ledger.ledger import Ledger
 from evcarry.ledger.store import write_ledger
 from evcarry.paths import repo_root, resolve_repo_path
 from evcarry.protocol.judge import build_judge
-from evcarry.providers.pin import PinGuard, current_pin_guard
+from evcarry.providers.pin import PinGuard, ProviderMismatch, current_pin_guard
 from evcarry.providers.registry import load_models, resolve_api_key
 from evcarry.runs.budget import (
     _SPEND_EVENTS,
@@ -60,6 +60,7 @@ from evcarry.runs.budget import (
     event_spend,
 )
 from evcarry.runs.config import ExperimentConfig
+from evcarry.runs.infra import INFRA_STATUS, INFRA_STOP_AFTER, InfrastructureError, infra_outcome, is_infrastructure_error
 from evcarry.trace.index import write_index
 from evcarry.trace.processor import JsonlTraceProcessor
 from evcarry.trace.writer import JsonlWriter, current_writer, has_run_end, read_events, run_path
@@ -171,6 +172,130 @@ def _set_aside(path: Path) -> Path:
         n += 1
     path.rename(target)
     return target
+
+
+def _events(path: Path) -> list[dict[str, Any]]:
+    """Trace events, skipping a last line cut short when the process was killed."""
+    events = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def previous_attempts(path: Path) -> list[dict[str, Any]]:
+    """Set-aside traces of one run (``<name>.aborted-<n>``), oldest first, with how each ended (C2, A19)."""
+    found = []
+    for candidate in path.parent.glob(f"{path.name}.aborted-*"):
+        suffix = candidate.name.rsplit("-", 1)[-1]
+        if not suffix.isdigit():
+            continue
+        events = _events(candidate)
+        end = next((event for event in reversed(events) if event.get("type") == "run_end"), None)
+        if end is not None:
+            ended = str(end.get("status") or "run_end")
+        else:
+            error = next((event for event in reversed(events) if event.get("type") == "run_error"), None)
+            ended = f"run_error:{error.get('error_type')}" if error else "unfinished"
+        found.append({"n": int(suffix), "ended": ended})
+    return sorted(found, key=lambda item: item["n"])
+
+
+def _last_run_end(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return next((event for event in reversed(_events(path)) if event.get("type") == "run_end"), None)
+
+
+BLOCK_LOG = "blocks.ndjson"
+
+
+def plan_blocks(config: ExperimentConfig, destination: Path, model_name: str) -> dict[str, list[tuple[str, int]]]:
+    """Apply the block rule (A19) before a pass over the grid: re-run or drop each hit block.
+
+    A (task, seed) block is hit when any arm's trace ended ``infra_error`` or has no ``run_end``.
+    Below ``max_block_attempts`` every arm's trace of the block is set aside, so the whole block runs
+    again. At the limit the block is dropped: a trace without ``run_end`` gets an ``infra_error``
+    ``run_end`` (``block_dropped: true``), so nothing of the block runs again. Every decision is a
+    line in ``blocks.ndjson`` (not ``*.jsonl``: those are run traces). A dropped block stays dropped.
+    """
+    tasks = load_task_list(resolve_repo_path(config.tasks))
+    decided: dict[str, list[tuple[str, int]]] = {"rerun": [], "dropped": []}
+    log_path = destination / BLOCK_LOG
+    dropped_before = set()
+    if log_path.exists():
+        for row in _events(log_path):
+            if row.get("action") == "dropped":
+                dropped_before.add((row.get("task"), row.get("seed")))
+    for task_name in tasks:
+        for seed in config.seeds:
+            if (task_name, seed) in dropped_before:
+                continue
+            paths = {arm: run_path(destination, task_name, arm, model_name, seed) for arm in config.arms}
+            hit = {}
+            for arm, path in paths.items():
+                if not path.exists():
+                    continue
+                end = _last_run_end(path)
+                if end is None:
+                    hit[arm] = "unfinished"
+                elif end.get("status") == INFRA_STATUS and not end.get("block_dropped"):
+                    hit[arm] = INFRA_STATUS
+            if not hit:
+                continue
+            attempts = max(
+                len(previous_attempts(path)) + (1 if path.exists() else 0) for path in paths.values()
+            )
+            action = "rerun" if attempts < config.max_block_attempts else "dropped"
+            with log_path.open("a", encoding="utf-8") as log:
+                log.write(
+                    json.dumps(
+                        {
+                            "type": "block",
+                            "task": task_name,
+                            "seed": seed,
+                            "action": action,
+                            "attempts_so_far": attempts,
+                            "hit": hit,
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    + "\n"
+                )
+            decided[action].append((task_name, seed))
+            for arm, path in paths.items():
+                if action == "rerun":
+                    if path.exists():
+                        _set_aside(path)
+                elif path.exists() and _last_run_end(path) is None:
+                    writer = JsonlWriter(path)
+                    try:
+                        writer.write(
+                            {
+                                "type": "run_end",
+                                "experiment": config.experiment,
+                                "task": task_name,
+                                "arm": arm,
+                                "model": model_name,
+                                "seed": seed,
+                                "agent_status": "not_finished",
+                                "status": INFRA_STATUS,
+                                "passed": None,
+                                "eval_passed": None,
+                                "block_dropped": True,
+                                "attempt": len(previous_attempts(path)) + 1,
+                                "error": "trace ended without run_end; block dropped after max_block_attempts",
+                                "spend_usd": trace_spend(path),
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                            }
+                        )
+                    finally:
+                        writer.close()
+    return decided
 
 
 def default_script_path(arm_name: str, script_dir: str = "tests/fixtures/scripts") -> Path:
@@ -413,6 +538,7 @@ async def _run_one(
     stem = f"{task_name}__{arm_name}__{seed}"
     if path.exists() and not has_run_end(path):
         _set_aside(path)
+    earlier = previous_attempts(path)
     writer = JsonlWriter(path, observer=meter.observe)
     token = current_writer.set(writer)
     pin_guard = PinGuard()
@@ -456,6 +582,8 @@ async def _run_one(
                 "reference_endpoint": price.reference_endpoint,
                 "gym_network_internal": config.gym.network_internal if config.environment == "docker" else None,
                 "gym_hide_task_dir": config.gym.hide_task_dir if config.environment == "docker" else None,
+                # C2 (A19): 1 for a first run; earlier attempts of this run are set aside next to it.
+                "attempt": len(earlier) + 1,
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
         )
@@ -505,14 +633,23 @@ async def _run_one(
             )
 
         runner = _run_gym if config.environment == "docker" else _run_fixture
-        outcome = await runner(
-            task=task, out_dir=out_dir, stem=stem, build=build, writer=writer, price=price, config=config
-        )
-        # A sub-agent tool or the judge may have caught the mismatch; the run still fails, without run_end.
-        pin_guard.raise_if_violated()
-        # A call refused at the experiment cap fails the run without run_end, like a pin violation.
+        try:
+            outcome = await runner(
+                task=task, out_dir=out_dir, stem=stem, build=build, writer=writer, price=price, config=config
+            )
+            # A sub-agent tool or the judge may have caught the mismatch.
+            pin_guard.raise_if_violated()
+        except Exception as exc:
+            # C1 (A19): a provider-route failure anywhere in the run (main agent, sub-agent, judge) ends it
+            # with status infra_error in every arm; the block rule (plan_blocks) re-runs or drops the block.
+            if not is_infrastructure_error(exc):
+                raise
+            outcome = infra_outcome(exc)
+        # A call refused at the experiment cap fails the run without run_end.
         meter.raise_if_cap_reached()
         verdict = final_verdict(outcome, ceiling_hit=meter.ceiling_hit)
+        if outcome.get("status") == INFRA_STATUS:
+            verdict.update(passed=None, status=INFRA_STATUS, cost_ceiling=meter.ceiling_hit)
         events = read_events(path)
         input_tokens = 0
         output_tokens = 0
@@ -555,9 +692,14 @@ async def _run_one(
                 # The same tokens at the price table's reference endpoint (what a reference ceiling counts).
                 "reference_spend_usd": reference_spend,
                 "provider_reported_cost_usd": reported,
+                # C2 (A19): which attempt this is, and how the set-aside earlier attempts ended.
+                "attempt": len(earlier) + 1,
+                "previous_attempts": earlier,
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
         )
+        # run_experiment reads this run_end: an infra_error counts toward INFRA_STOP_AFTER, and an
+        # off-pin reply (error_type ProviderMismatch) stops new runs, as before A19.
         return spend
     except Exception as exc:
         # The run ends without run_end (a restart runs it again); say why in its trace.
@@ -662,12 +804,17 @@ async def run_experiment(
         reserve_billed_per_reference=config.budget.reserve_billed_per_reference,
     )
     written: list[Path] = []
-    pending = []
-    for task_name, arm_name, seed in grid(config):
-        path = run_path(destination, task_name, arm_name, model_config.model or model_config.name, seed)
-        if has_run_end(path):
-            continue
-        pending.append((task_name, arm_name, seed, path))
+    model_name = model_config.model or model_config.name
+    infra_hits: list[Path] = []
+
+    def _pending() -> list[tuple[str, str, int, Path]]:
+        items = []
+        for task_name, arm_name, seed in grid(config):
+            path = run_path(destination, task_name, arm_name, model_name, seed)
+            if has_run_end(path):
+                continue
+            items.append((task_name, arm_name, seed, path))
+        return items
 
     def _admit() -> RunMeter:
         """Check the cap and the schedule, then count the new run as in flight (no await in between)."""
@@ -676,7 +823,7 @@ async def run_experiment(
         guard.open(meter)
         return meter
 
-    async def _one(task_name: str, arm_name: str, seed: int, meter: RunMeter) -> None:
+    async def _one(task_name: str, arm_name: str, seed: int, meter: RunMeter, path: Path) -> None:
         try:
             script = _script_for(arm_name, script_overrides, model_config.kind, config.script_dir)
             await _run_one(
@@ -694,16 +841,27 @@ async def run_experiment(
         finally:
             # Finished, failed or aborted: what the run spent stays counted.
             guard.close(meter)
+        end = _last_run_end(path)
+        if end is not None and end.get("status") == INFRA_STATUS:
+            infra_hits.append(path)
+            if end.get("error_type") == "ProviderMismatch":
+                # An off-pin reply is a route problem that would repeat on every run: stop new runs.
+                raise ProviderMismatch(str(end.get("error") or "provider pin broken"))
 
-    if config.parallel_tasks <= 1 or stop_after is not None:
-        finished = 0
-        for task_name, arm_name, seed, path in pending:
-            await _one(task_name, arm_name, seed, _admit())
-            written.append(path)
-            finished += 1
-            if stop_after is not None and finished >= stop_after:
-                break
-    else:
+    def _infra_stop() -> bool:
+        return len(infra_hits) >= INFRA_STOP_AFTER
+
+    async def _pass(pending: list[tuple[str, str, int, Path]]) -> list[Path]:
+        done: list[Path] = []
+        if config.parallel_tasks <= 1 or stop_after is not None:
+            for task_name, arm_name, seed, path in pending:
+                if _infra_stop():
+                    break
+                await _one(task_name, arm_name, seed, _admit(), path)
+                done.append(path)
+                if stop_after is not None and len(written) + len(done) >= stop_after:
+                    break
+            return done
         semaphore = asyncio.Semaphore(config.parallel_tasks)
         refusals: list[BudgetError] = []
         failures: list[Exception] = []
@@ -713,7 +871,7 @@ async def run_experiment(
             task_name, arm_name, seed, path = item
             async with semaphore:
                 while True:
-                    if refusals or failures:
+                    if refusals or failures or _infra_stop():
                         return None
                     try:
                         meter = _admit()
@@ -732,11 +890,11 @@ async def run_experiment(
                         refusals.append(exc)
                         return None
                 try:
-                    await _one(task_name, arm_name, seed, meter)
+                    await _one(task_name, arm_name, seed, meter, path)
                 except Exception as exc:  # noqa: BLE001 - re-raised once the runs in flight are done
-                    # A failed run (provider error, provider mismatch, harness bug) stops new runs, but the
+                    # A failed run (harness bug, an off-pin reply, the experiment cap) stops new runs, but the
                     # runs already going were paid for and finish. The failed run has no run_end, so a
-                    # restart runs it again; its spend is counted from its trace.
+                    # restart runs its block again (A19); its spend is counted from its trace.
                     failures.append(exc)
                     return None
                 finally:
@@ -753,13 +911,30 @@ async def run_experiment(
                 item.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
-        written = [path for path in results if path is not None]
+        done = [path for path in results if path is not None]
         if failures or refusals:
+            written.extend(done)
             write_index(destination)
         if failures:
             raise failures[0]
         if refusals:
             raise refusals[0]
+        return done
+
+    # A19: hit blocks from earlier invocations are re-run or dropped first; after each pass, blocks that an
+    # infrastructure error hit in this pass are planned again (bounded by max_block_attempts).
+    for _ in range(config.max_block_attempts + 1):
+        plan_blocks(config, destination, model_name)
+        pending = _pending()
+        if not pending or _infra_stop() or (stop_after is not None and len(written) >= stop_after):
+            break
+        written.extend(await _pass(pending))
+    if _infra_stop():
+        write_index(destination)
+        raise InfrastructureError(
+            f"{len(infra_hits)} runs ended with infrastructure errors in this invocation; new runs stopped "
+            f"(INFRA_STOP_AFTER={INFRA_STOP_AFTER}). Their blocks run again on the next invocation."
+        )
     if written or any(destination.glob("*.jsonl")):
         write_index(destination)
     return written
