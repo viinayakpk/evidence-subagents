@@ -78,6 +78,9 @@ def _copy_prompts(tmp_path: Path) -> Path:
 
 def test_freeze_detects_file_and_code_changes(tmp_path: Path, monkeypatch) -> None:
     prompts = _copy_prompts(tmp_path)
+    # gym_v1 is frozen (be751d4), so an exact copy matches; without its FROZEN.json it is unfrozen.
+    assert prompt_freeze.status(prompts).state == "match"
+    (prompts / "FROZEN.json").unlink()
     assert prompt_freeze.status(prompts).state == "unfrozen"
     prompt_freeze.freeze(prompts, git_commit="test")
     assert prompt_freeze.status(prompts).state == "match"

@@ -180,7 +180,7 @@ async def test_an_edited_frozen_task_list_is_refused(tmp_path: Path, monkeypatch
     manager.check_frozen_inputs(load_experiment("configs/experiments/pilot_deepseek.yaml"))
 
 
-def test_cli_dry_run_and_exit_codes(capsys, monkeypatch) -> None:
+def test_cli_dry_run_and_exit_codes(capsys, monkeypatch, tmp_path: Path) -> None:
     main(["run", "configs/experiments/mock_e2e.yaml", "--dry-run"])
     out = capsys.readouterr().out
     assert "fixture-sections" in out
@@ -204,9 +204,22 @@ def test_cli_dry_run_and_exit_codes(capsys, monkeypatch) -> None:
     with pytest.raises(SystemExit) as docker:
         main(["run", "configs/experiments/pilot_deepseek.yaml"])
     assert docker.value.code == 5
-    # The headline needs a frozen prompt set; gym_v1 is frozen only after the pilot.
-    with pytest.raises(SystemExit) as unfrozen:
+    # The headline needs a frozen prompt set. gym_v1 is frozen (be751d4), so the real headline gets past the
+    # freeze check and stops at the Docker preflight; a copy of it without FROZEN.json is refused with code 6.
+    with pytest.raises(SystemExit) as frozen:
         main(["run", "configs/experiments/headline_deepseek.yaml"])
+    assert frozen.value.code == 5
+    import shutil
+
+    unfrozen_prompts = tmp_path / "gym_v1"
+    shutil.copytree("prompts/gym_v1", unfrozen_prompts)
+    (unfrozen_prompts / "FROZEN.json").unlink()
+    headline_yaml = Path("configs/experiments/headline_deepseek.yaml").read_text(encoding="utf-8")
+    assert "prompts: prompts/gym_v1\n" in headline_yaml
+    unfrozen_config = tmp_path / "headline_unfrozen.yaml"
+    unfrozen_config.write_text(headline_yaml.replace("prompts: prompts/gym_v1\n", f"prompts: {unfrozen_prompts}\n"), encoding="utf-8")
+    with pytest.raises(SystemExit) as unfrozen:
+        main(["run", str(unfrozen_config)])
     assert unfrozen.value.code == 6
     main(["check", "configs/experiments/openrouter_debug.yaml"])
     checked = capsys.readouterr().out
