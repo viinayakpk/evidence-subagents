@@ -585,11 +585,20 @@ def final_verdict(outcome: dict[str, Any], *, ceiling_hit: bool = False) -> dict
     Owner decision 5: a run in which any model call was refused at the per-run cost
     ceiling has status ``cost_ceiling`` and counts as failed, even if the main agent
     went on to finish (a sub-agent or judge call was cut short).
+
+    ``status`` agrees with ``passed``: a graded contaminated run has status
+    ``contaminated``, and the grader's own status stays in ``eval_status``. Before
+    2026-10-25 (dev run) ``status`` kept the grader's word, so a contaminated grader
+    pass read ``status: passed`` next to ``passed: false``.
     """
     eval_passed = outcome.get("passed")
     contaminated = bool(outcome.get("ground_truth_suspects")) or bool(outcome.get("ground_truth_obtained"))
     passed = False if contaminated and eval_passed is not None else eval_passed
     verdict: dict[str, Any] = {"eval_passed": eval_passed, "contaminated": contaminated, "passed": passed, "cost_ceiling": ceiling_hit}
+    if "status" in outcome:
+        verdict["eval_status"] = outcome["status"]
+    if contaminated and eval_passed is not None:
+        verdict["status"] = "contaminated"
     if ceiling_hit:
         verdict.update(passed=False, status="cost_ceiling")
     return verdict
