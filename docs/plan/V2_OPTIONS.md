@@ -1,7 +1,6 @@
 # v2 design options, costed (draft, 2026-10-25)
 
-Status: draft for Vinayak's decision. Nothing here is implemented or registered yet. Choosing a design
-needs a dated amendment (A19) before any headline run. Budget left: about $45 billed.
+Status: design R chosen by Vinayak on 2026-10-25, with catchability as a co-primary result. It is registered as plan amendments A21–A22 (`EXPERIMENT_PLAN.md`), with config `configs/experiments/headline_R_seed1.yaml`, which has not been run. The power numbers come from `scripts/power_sim.py`.
 
 ## 1. Question, arms, endpoint
 
