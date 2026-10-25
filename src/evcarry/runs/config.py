@@ -83,6 +83,9 @@ class GymConfig(_Strict):
     # P2-2. After the MCP servers start, the task's local mock web roots move out of /workspace/tasks, and
     # /workspace keeps only what the agent and the servers need; the task directory is restored before grading.
     hide_task_dir: bool = False
+    # A20 (2026-10-25). The agent's own code (python_execute, the terminal server) connects to Postgres as a
+    # read-only role and runs as a separate uid; the MCP servers keep a write role whose password only they get.
+    agent_db_readonly: bool = False
 
 
 class SamplingConfig(_Strict):

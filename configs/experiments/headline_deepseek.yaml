@@ -26,4 +26,4 @@ parallel_tasks: 8
 out: runs/headline_deepseek_v1
 environment: docker
 task_root: third_party/toolathlon_gym/tasks/finalpool
-gym: {network_internal: true, hide_task_dir: true}
+gym: {network_internal: true, hide_task_dir: true, agent_db_readonly: true}  # A20: agent code cannot write the database

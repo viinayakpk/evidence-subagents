@@ -30,6 +30,8 @@ both off a run issues exactly the docker commands it did before they existed.
   ``<task>/tmp`` or ``<task>/files``) is copied to ``/srv/evcarry_mock/<port>`` and
   restarted on the same port, checked before and after; then ``/workspace`` keeps
   only ``HIDE_KEEP``. Grading puts the task directory and ``utils`` back first.
+- ``agent_db_readonly`` (plan A20, 2026-10-25): the agent's own code cannot write the
+  run's database. See the notes above ``AGENT_PG`` and ``lock_sql``.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ import logging
 import os
 import posixpath
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -89,6 +92,76 @@ PG_ENV = {"PGPORT": "5432", "PGUSER": "eigent", "PGPASSWORD": "camel", "PGDATABA
 # only at start.
 HIDE_KEEP = ("agent_workspace", "evcarry_run", "pyproject.toml", "uv.lock", ".venv")
 MOCK_ROOT = "/srv/evcarry_mock"  # moved mock web roots: <MOCK_ROOT>/<port>, log in <MOCK_ROOT>/<port>.log
+# -- agent_db_readonly (plan A20) -------------------------------------------------------------------
+# The gym's own preprocess and grader code connects as eigent/camel (the password is written into 966 task
+# files), and eigent is the cluster superuser. With the guard on:
+#   - the container env (what python_execute, the terminal server and every shell they start inherit) holds
+#     AGENT_PG: a role with SELECT on every schema and no write, DDL or ownership anywhere;
+#   - after preprocess, eigent's password becomes a per-run secret that only the MCP servers get, with
+#     ``docker exec -e``. The snowflake server, which runs any SQL the agent sends (write_query, and
+#     two-part names pass through untranslated), gets SF_ROLE instead: it writes only its own schemas;
+#   - the agent's tools run as uid AGENT_UID (``setpriv``) with only the file capabilities root's tools used
+#     (dac_override, fowner, chown): they read and write every file as before, but cannot read another uid's
+#     /proc/<pid>/environ (that needs CAP_SYS_PTRACE, which Docker never grants), so the MCP servers'
+#     secret stays out of reach, and they cannot signal those processes;
+#   - grading: eigent's password goes back to camel and the grader gets eigent's env, as before.
+AGENT_PG = {"PGUSER": "evcarry_agent", "PGPASSWORD": "evcarry_agent"}  # read-only role; its password is not a secret
+GYM_PG_WRITE = {"PGUSER": "eigent", "PGPASSWORD": "camel"}  # what preprocess and graders use (hard-coded there too)
+SF_ROLE = "evcarry_sf"
+SF_SCHEMAS = ("sf_data", "sf")  # the snowflake mock's tables: sf_data."DB__SCHEMA__TABLE"
+SF_SERVERS = frozenset({"snowflake"})
+AGENT_SERVERS = frozenset({"terminal"})  # MCP servers that run commands the agent writes: run as the agent
+AGENT_UID = 4242
+AGENT_CAPS = "+dac_override,+fowner,+chown"
+AGENT_EXEC = (
+    "setpriv", f"--reuid={AGENT_UID}", f"--regid={AGENT_UID}", "--clear-groups",
+    f"--inh-caps={AGENT_CAPS}", f"--ambient-caps={AGENT_CAPS}", "--",
+)
+AGENT_HOME = "/root"  # uv's cache and interpreters stay where root's tools found them
+
+
+def _pg_env(creds: dict[str, str]) -> dict[str, str]:
+    """libpq names plus the PG_* names the gym's servers read."""
+    return {**creds, "PG_USER": creds["PGUSER"], "PG_PASSWORD": creds["PGPASSWORD"]}
+
+
+def lock_sql(write_secret: str, sf_secret: str) -> str:
+    """SQL run as eigent over the Postgres container's local socket after preprocess (``agent_db_readonly``).
+
+    Read access is granted on every non-system schema, including tables the MCP servers create later
+    (default privileges for eigent and SF_ROLE). The agent role owns nothing, has no CREATE on the database
+    or any schema, and is not a member of any role. Temporary tables stay possible (they are private to the
+    session and no grader reads them).
+    """
+    quote = lambda value: "'" + value.replace("'", "''") + "'"  # noqa: E731
+    sf_list = ", ".join(quote(name) for name in SF_SCHEMAS)
+    return f"""
+CREATE ROLE {AGENT_PG['PGUSER']} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {quote(AGENT_PG['PGPASSWORD'])};
+CREATE ROLE {SF_ROLE} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {quote(sf_secret)};
+REVOKE CREATE ON DATABASE toolathlon_gym FROM PUBLIC;
+DO $guard$
+DECLARE s text;
+BEGIN
+  FOR s IN SELECT nspname FROM pg_namespace WHERE nspname !~ '^pg_' AND nspname <> 'information_schema' LOOP
+    EXECUTE format('REVOKE CREATE ON SCHEMA %I FROM PUBLIC', s);
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO {AGENT_PG['PGUSER']}, {SF_ROLE}', s);
+    EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO {AGENT_PG['PGUSER']}, {SF_ROLE}', s);
+    EXECUTE format('GRANT SELECT ON ALL SEQUENCES IN SCHEMA %I TO {AGENT_PG['PGUSER']}, {SF_ROLE}', s);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE eigent IN SCHEMA %I GRANT SELECT ON TABLES TO {AGENT_PG['PGUSER']}, {SF_ROLE}', s);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE eigent IN SCHEMA %I GRANT SELECT ON SEQUENCES TO {AGENT_PG['PGUSER']}, {SF_ROLE}', s);
+    IF s IN ({sf_list}) THEN
+      EXECUTE format('GRANT CREATE ON SCHEMA %I TO {SF_ROLE}', s);
+      EXECUTE format('GRANT ALL ON ALL TABLES IN SCHEMA %I TO {SF_ROLE}', s);
+      EXECUTE format('GRANT ALL ON ALL SEQUENCES IN SCHEMA %I TO {SF_ROLE}', s);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE {SF_ROLE} IN SCHEMA %I GRANT SELECT ON TABLES TO {AGENT_PG['PGUSER']}', s);
+    END IF;
+  END LOOP;
+END
+$guard$;
+ALTER ROLE eigent PASSWORD {quote(write_secret)};
+"""
+
+
 # The gym's tool_servers.py copies these libpq names onto the PG_* names its servers read.
 _PG_BRIDGE = (
     ("PG_HOST", "PGHOST"),
@@ -203,17 +276,26 @@ def resolve_placeholders(value: str, *, task_dir: str) -> str:
 
 
 def server_exec_args(
-    spec: McpServerSpec, *, container: str, container_env: dict[str, str], task_dir: str
+    spec: McpServerSpec,
+    *,
+    container: str,
+    container_env: dict[str, str],
+    task_dir: str,
+    env_override: dict[str, str] | None = None,
+    prefix: tuple[str, ...] = (),
 ) -> tuple[str, list[str]]:
     """``(cwd, docker exec args)`` that start one gym MCP server in ``container``.
 
     Same environment rule as the gym's ``build_mcp_clients``: YAML env first,
     the container's own env wins, then PG* is copied onto PG_*. Only values the
-    container does not already have are passed with ``-e``.
+    container does not already have are passed with ``-e``. ``env_override``
+    (``agent_db_readonly``: this server's database role) wins over both, and
+    ``prefix`` goes before the server command (the agent's ``setpriv``).
     """
     resolve = lambda value: resolve_placeholders(value, task_dir=task_dir)  # noqa: E731
     merged = {key: resolve(value) for key, value in spec.env.items()}
     merged.update(container_env)
+    merged.update(env_override or {})
     for target, source in _PG_BRIDGE:
         if source in merged:
             merged[target] = merged[source]
@@ -222,7 +304,7 @@ def server_exec_args(
     for key in sorted(merged):
         if container_env.get(key) != merged[key]:
             args += ["-e", f"{key}={merged[key]}"]
-    args += [container, resolve(spec.command), *(resolve(item) for item in spec.args)]
+    args += [container, *prefix, resolve(spec.command), *(resolve(item) for item in spec.args)]
     return cwd, args
 
 
@@ -356,6 +438,8 @@ class GymRunInfo:
     network_internal: bool = False
     # hide_task_dir: mock servers moved or left, /workspace entries deleted and kept, host copies.
     hidden: dict[str, Any] | None = None
+    # agent_db_readonly: when the database was locked and unlocked, the agent's role and uid.
+    db_guard: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -372,6 +456,7 @@ class GymRunInfo:
             "sealed": self.sealed,
             "network_internal": self.network_internal,
             "hidden": self.hidden,
+            "db_guard": self.db_guard,
         }
 
 
@@ -392,6 +477,7 @@ class GymTaskEnv:
         seal: bool = True,
         network_internal: bool = False,
         hide_task_dir: bool = False,
+        agent_db_readonly: bool = False,
     ) -> None:
         if hide_task_dir and not seal:
             raise ValueError("hide_task_dir needs seal=True: grading restores the task directory from the sealed copy")
@@ -399,6 +485,10 @@ class GymTaskEnv:
         self.seal = seal
         self.network_internal = network_internal
         self.hide_task_dir = hide_task_dir
+        self.agent_db_readonly = agent_db_readonly
+        # Per-run secrets: eigent's password while the agent runs (MCP servers only) and the snowflake role's.
+        self._write_secret = secrets.token_hex(16) if agent_db_readonly else ""
+        self._sf_secret = secrets.token_hex(16) if agent_db_readonly else ""
         self.images = images or GymImages.default()
         self.policy = policy or GymToolPolicy.load()
         self.log_dir = log_dir
@@ -421,6 +511,7 @@ class GymTaskEnv:
             "PGHOST": self.info.postgres,
             "PG_HOST": self.info.postgres,
             **PG_ENV,
+            **(AGENT_PG if agent_db_readonly else {}),
             "LOCAL_SERVERS_PATH": LOCAL_SERVERS,
             "PYTHON_BIN": PYTHON_BIN,
         }
@@ -473,6 +564,8 @@ class GymTaskEnv:
         mark = time.perf_counter()
         info.preprocess = await self._preprocess()
         info.timings["preprocess_s"] = time.perf_counter() - mark
+        if self.agent_db_readonly:
+            await self._lock_database()
         mark = time.perf_counter()
         await self._connect_servers()
         info.timings["mcp_connect_s"] = time.perf_counter() - mark
@@ -620,7 +713,7 @@ class GymTaskEnv:
 
     async def _check_python_execute(self, record: dict[str, Any]) -> None:
         probe = await self._docker(
-            "exec", "-w", WORKSPACE, self.info.agent, *_kill_after(120),
+            "exec", "-w", WORKSPACE, *self._agent_exec(), self.info.agent, *_kill_after(120), *self._agent_prefix(),
             "uv", "run", "--directory", WORKSPACE, "python", "-c", "import sys; print(sys.prefix)",
             timeout=150, check=False,
         )
@@ -651,6 +744,67 @@ class GymTaskEnv:
         script = f"mkdir -p {' '.join(dirs)} && if [ -d {self.task_dir}/initial_workspace ]; then cp -a {self.task_dir}/initial_workspace/. {WORKSPACE}/; fi"
         await self._docker("exec", self.info.agent, "bash", "-c", script, timeout=120)
 
+    def _gym_env_args(self) -> list[str]:
+        """``-e`` flags that give the gym's own preprocess and grader eigent's credentials (``agent_db_readonly``)."""
+        if not self.agent_db_readonly:
+            return []
+        return [item for key, value in _pg_env(GYM_PG_WRITE).items() for item in ("-e", f"{key}={value}")]
+
+    def _agent_exec(self) -> list[str]:
+        """``docker exec`` options and command prefix for a process that runs the agent's code."""
+        if not self.agent_db_readonly:
+            return []
+        return ["-e", f"HOME={AGENT_HOME}"]
+
+    def _agent_prefix(self) -> list[str]:
+        return list(AGENT_EXEC) if self.agent_db_readonly else []
+
+    async def _psql(self, sql: str, *, timeout: float = 120.0) -> CommandResult:
+        """Run SQL as eigent over the Postgres container's local socket (trust there; the agent cannot reach it)."""
+        return await self._docker(
+            "exec", "-i", self.info.postgres, "psql", "-q", "-U", "eigent", "-d", "toolathlon_gym", "-v", "ON_ERROR_STOP=1",
+            stdin=sql, timeout=timeout,
+        )
+
+    async def _lock_database(self) -> None:
+        """``agent_db_readonly``: create the agent and snowflake roles, then give eigent this run's secret password.
+
+        Also creates the agent's uid in the agent container. Any failure raises ``EnvironmentUnavailable``.
+        """
+        mark = time.perf_counter()
+        try:
+            await self._psql(lock_sql(self._write_secret, self._sf_secret))
+            await self._docker(
+                "exec", self.info.agent, "bash", "-c",
+                f"getent passwd {AGENT_UID} >/dev/null || useradd -M -o -u {AGENT_UID} -d {AGENT_HOME} -s /bin/bash evcarry_agent",
+                timeout=60,
+            )
+        except Exception as exc:  # noqa: BLE001 - the run must not start without the guard it asked for
+            raise EnvironmentUnavailable(f"agent_db_readonly setup for {self.task.name} failed: {exc}"[:1000]) from exc
+        self.info.db_guard = {
+            "agent_role": AGENT_PG["PGUSER"], "agent_uid": AGENT_UID, "agent_caps": AGENT_CAPS,
+            "sf_role": SF_ROLE, "sf_servers": sorted(SF_SERVERS), "agent_servers": sorted(AGENT_SERVERS),
+            "locked": True, "unlocked": False,
+        }
+        self.info.timings["db_lock_s"] = time.perf_counter() - mark
+
+    async def _unlock_database(self) -> None:
+        """Before grading: eigent's password back to the one the gym's graders have written into them."""
+        if not self.agent_db_readonly or not (self.info.db_guard or {}).get("locked"):
+            return
+        await self._psql(f"ALTER ROLE eigent PASSWORD '{GYM_PG_WRITE['PGPASSWORD']}';")
+        self.info.db_guard["unlocked"] = True
+
+    def _server_env(self, name: str) -> tuple[dict[str, str] | None, tuple[str, ...]]:
+        """``(env_override, prefix)`` for one MCP server under ``agent_db_readonly``."""
+        if not self.agent_db_readonly:
+            return None, ()
+        if name in AGENT_SERVERS:
+            return {"HOME": AGENT_HOME}, AGENT_EXEC
+        if name in SF_SERVERS:
+            return _pg_env({"PGUSER": SF_ROLE, "PGPASSWORD": self._sf_secret}), ()
+        return _pg_env({"PGUSER": GYM_PG_WRITE["PGUSER"], "PGPASSWORD": self._write_secret}), ()
+
     def _module(self, part: str) -> str:
         return f"tasks.finalpool.{self.task.name}.{part}.main"
 
@@ -664,7 +818,7 @@ class GymTaskEnv:
         launch = " ".join(self.info.launch_time.split()[:2])  # the gym drops the weekday here
         limit = int(self.setup_timeout)
         result = await self._docker(
-            "exec", "-w", GYM_HOME, self.info.agent, *_kill_after(limit), PYTHON_BIN, "-m", self._module("preprocess"),
+            "exec", "-w", GYM_HOME, *self._gym_env_args(), self.info.agent, *_kill_after(limit), PYTHON_BIN, "-m", self._module("preprocess"),
             "--agent_workspace", WORKSPACE, "--launch_time", launch,
             timeout=limit + 30, check=False,
         )
@@ -681,7 +835,11 @@ class GymTaskEnv:
             raise EnvironmentUnavailable(f"No gym MCP config for servers {unknown}")
         for name in self.task.mcp_servers:
             spec = self.server_specs[name]
-            cwd, args = server_exec_args(spec, container=self.info.agent, container_env=self.container_env, task_dir=self.task_dir)
+            override, prefix = self._server_env(name)
+            cwd, args = server_exec_args(
+                spec, container=self.info.agent, container_env=self.container_env, task_dir=self.task_dir,
+                env_override=override, prefix=prefix,
+            )
             await self._docker("exec", self.info.agent, "mkdir", "-p", cwd, timeout=60)
             env = {key: value for key, value in os.environ.items() if key.startswith("DOCKER_")}
             params = StdioServerParameters(command=self.docker, args=args, env=env or None)
@@ -750,8 +908,9 @@ class GymTaskEnv:
         the workspace but the image's own code and runtime (``/opt/local_servers``, ``/opt/venv``, uv's
         interpreters, the kept ``/workspace/{pyproject.toml,uv.lock,.venv}``) and the moved mock sites
         under ``MOCK_ROOT``, which the task's localhost URLs serve anyway; and they have no route out.
-        The container environment still carries the Postgres credentials, so direct SQL against the
-        run's own database (the one graders read) stays possible, in every arm alike.
+        Without ``agent_db_readonly`` the container environment carries eigent's credentials, so direct
+        SQL writes to the run's own database (the one graders read) are possible, in every arm alike.
+        With it (plan A20) this runs as ``AGENT_UID`` with the read-only role: reads work, writes are denied.
         """
         code = str(arguments.get("code", ""))
         try:
@@ -764,11 +923,12 @@ class GymTaskEnv:
             filename += ".py"
         target = f"{WORKSPACE}/.python_tmp/{filename}"
         await self._docker(
-            "exec", "-i", self.info.agent, "bash", "-c", f"mkdir -p {WORKSPACE}/.python_tmp && cat > {shlex.quote(target)}",
+            "exec", "-i", *self._agent_exec(), self.info.agent, *self._agent_prefix(),
+            "bash", "-c", f"mkdir -p {WORKSPACE}/.python_tmp && cat > {shlex.quote(target)}",
             stdin=code, timeout=60,
         )
         result = await self._docker(
-            "exec", "-w", WORKSPACE, self.info.agent, *_kill_after(timeout),
+            "exec", "-w", WORKSPACE, *self._agent_exec(), self.info.agent, *_kill_after(timeout), *self._agent_prefix(),
             "uv", "run", "--directory", WORKSPACE, f"./.python_tmp/{filename}",
             timeout=timeout + 15, check=False,
         )
@@ -800,9 +960,10 @@ class GymTaskEnv:
         result_file = f"{RUN_DIR}/eval_result.json"
         mark = time.perf_counter()
         await self._unseal()
+        await self._unlock_database()
         limit = int(self.eval_timeout)
         result = await self._docker(
-            "exec", "-w", GYM_HOME, self.info.agent, *_kill_after(limit), PYTHON_BIN, "-m", self._module("evaluation"),
+            "exec", "-w", GYM_HOME, *self._gym_env_args(), self.info.agent, *_kill_after(limit), PYTHON_BIN, "-m", self._module("evaluation"),
             "--res_log_file", result_file,
             "--agent_workspace", WORKSPACE,
             "--groundtruth_workspace", f"tasks/finalpool/{self.task.name}/groundtruth_workspace",

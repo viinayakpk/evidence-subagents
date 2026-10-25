@@ -24,4 +24,4 @@ parallel_tasks: 8
 out: runs/dev_verify_v2
 environment: docker
 task_root: third_party/toolathlon_gym/tasks/finalpool
-gym: {network_internal: true, hide_task_dir: true}
+gym: {network_internal: true, hide_task_dir: true, agent_db_readonly: true}  # A20: agent code cannot write the database
