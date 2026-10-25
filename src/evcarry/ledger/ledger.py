@@ -32,6 +32,10 @@ class LedgerEntry:
         return asdict(self)
 
 
+# A cited id without its provider prefix resolves only if it has at least this many characters (Ledger.get).
+MIN_SUFFIX_ID = 8
+
+
 @dataclass
 class Ledger:
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
@@ -82,7 +86,22 @@ class Ledger:
         return entry
 
     def get(self, call_id: str) -> LedgerEntry | None:
-        return self.entries.get(call_id)
+        """The entry recorded under ``call_id``.
+
+        A cited id that is missing a provider prefix also resolves when exactly one recorded id is that
+        prefix plus the cited id (``chatcmpl-tool-814208009fe40ab0`` cited as ``814208009fe40ab0``). The dev
+        run of 2026-10-25 showed a sub-agent drop the ``chatcmpl-tool-`` prefix on every citation of a return
+        while every span and value was in the cited result; the id still names one call without doubt.
+        Ids shorter than 8 characters never match this way.
+        """
+        entry = self.entries.get(call_id)
+        if entry is not None or not isinstance(call_id, str) or len(call_id) < MIN_SUFFIX_ID:
+            return entry
+        matches = [
+            value for key, value in self.entries.items()
+            if key.endswith(call_id) and key[: -len(call_id)].endswith(("-", "_", ":"))
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def latest(self, call_id: str) -> LedgerEntry | None:
         """The newest entry recorded under ``call_id`` or one of its ``#n`` variants."""
