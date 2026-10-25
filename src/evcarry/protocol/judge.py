@@ -1,10 +1,24 @@
 """L3 support judge.
 
-The mock and DeepSeek runs in this milestone use a deterministic lexical judge
-so the pipeline costs $0. A model-backed judge is the M6 hook: it calls whatever
-model the provider layer was given and expects JSON ``{"supports": bool, "reason": str}``.
+``LlmJudge`` asks a model from ``configs/models.yaml`` (DeepSeek, OpenRouter,
+local vLLM, or a scripted fixture) whether a claim's evidence supports it. The
+system prompt is the fixed file ``prompts/v1/judge.md``; the reply is one JSON
+object with a verdict label, the left-out items, and a reason. Every call is
+written to the run trace as a ``judge_call`` event with the prompt hash,
+request hash, raw reply, tokens, and cost. If the call or the parse fails, the
+lexical judge decides and the verdict is marked ``lexical_fallback``.
 
-Lexical rule (intentional, and weak on omissions):
+The evidence arrives already excerpted (``protocol.audit.excerpt``), with every gap
+marked. ``judge_request`` no longer cuts it in the middle (2026-10-25, P1-7); an
+evidence text still above ``max_evidence_chars`` keeps its head and says how much
+is not shown.
+
+Reasoning (2026-10-25, P3-3, fixed before the hand-labelling): the judge's request
+carries the model entry's ``judge_extra_body`` (``configs/models.yaml``), so its
+reasoning setting is explicit instead of the provider default, and the same for
+every arm. Each ``judge_call`` logs it.
+
+``LexicalJudge`` is the cheap deterministic judge (and the fallback):
 - Every hyphenated token in the claim text (``student-Z``) must appear in the
   evidence blob.
 - A non-numeric string value must appear in the evidence blob.
@@ -14,15 +28,36 @@ Lexical rule (intentional, and weak on omissions):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
-from dataclasses import dataclass
-from typing import Any
+import time
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Literal
 
+from agents.model_settings import ModelSettings
+from agents.models.interface import ModelTracing
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+from evcarry.harness.run_settings import TEMPERATURE
+from evcarry.paths import resolve_repo_path
 from evcarry.protocol.checks import is_numeric_value, value_in_text
 from evcarry.protocol.schema import Claim
+from evcarry.providers.pin import ProviderMismatch
+from evcarry.providers.usage import PriceTable
+from evcarry.runs.budget import BudgetError
+from evcarry.trace.writer import JsonlWriter, current_writer
 
 _HYPHENATED = re.compile(r"[A-Za-z]+-[A-Za-z0-9]+")
+
+JUDGE_PROMPT = "prompts/v1/judge.md"
+
+# Which return a judge call belongs to (arm, return_index, sub-agent, injected fault), set by the
+# sub-agent return boundary around its audit. Only the trace reads it; the judge never sees it.
+current_audit: ContextVar[dict[str, Any] | None] = ContextVar("evcarry_current_audit", default=None)
+VerdictLabel = Literal["supported", "contradicted", "incomplete", "unverifiable"]
 
 
 @dataclass
@@ -30,9 +65,19 @@ class JudgeVerdict:
     supports: bool
     reason: str
     source: str
+    verdict: str | None = None
+    missing: list[str] = field(default_factory=list)
+    detail: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, object]:
-        return {"supports": self.supports, "reason": self.reason, "source": self.source}
+        data: dict[str, object] = {"supports": self.supports, "reason": self.reason, "source": self.source}
+        if self.verdict is not None:
+            data["verdict"] = self.verdict
+        if self.missing:
+            data["missing"] = list(self.missing)
+        if self.detail:
+            data["detail"] = dict(self.detail)
+        return data
 
 
 class LexicalJudge:
@@ -56,22 +101,269 @@ class LexicalJudge:
                 return JudgeVerdict(False, f"listed values missing from evidence: {absent}", self.source)
         return JudgeVerdict(True, "lexical support holds", self.source)
 
+    async def ajudge(self, claim: Claim, evidence_text: str) -> JudgeVerdict:
+        return self.judge(claim, evidence_text)
 
-class ModelJudge:
-    """Call a Model-interface object. Used when a real judge model is configured."""
 
-    source = "model"
+class JudgeOutput(BaseModel):
+    """The structured verdict the judge prompt asks for."""
 
-    def __init__(self, complete: Any) -> None:
-        self._complete = complete
+    verdict: VerdictLabel
+    reason: str = ""
+    missing: list[str] = Field(default_factory=list)
 
-    async def judge(self, claim: Claim, evidence_text: str) -> JudgeVerdict:
-        raw = await self._complete(claim, evidence_text)
-        text = raw if isinstance(raw, str) else str(raw)
+    @field_validator("missing", mode="before")
+    @classmethod
+    def _missing_as_strings(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple)):
+            return [str(item) for item in value]
+        return [str(value)]
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _reason_as_string(cls, value: Any) -> str:
+        return "" if value is None else str(value)
+
+
+def parse_judge_output(text: str) -> JudgeOutput:
+    """Parse the last JSON object in ``text`` that has a ``verdict`` (or ``supports``) key.
+
+    The last one is the model's answer; drafts and quoted examples come earlier.
+    Code fences and surrounding prose are ignored. The older
+    ``{"supports": bool, "reason": str}`` shape maps to ``supported`` / ``unverifiable``.
+    """
+    decoder = json.JSONDecoder()
+    data: dict[str, Any] | None = None
+    position = text.find("{")
+    while position >= 0:
         try:
-            data = json.loads(text)
-        except json.JSONDecodeError as exc:
-            return JudgeVerdict(False, f"judge returned non-json: {exc}", self.source)
-        supports = bool(data.get("supports"))
-        reason = str(data.get("reason") or "")
-        return JudgeVerdict(supports, reason, self.source)
+            candidate, end = decoder.raw_decode(text, position)
+        except json.JSONDecodeError:
+            position = text.find("{", position + 1)
+            continue
+        if isinstance(candidate, dict) and ("verdict" in candidate or "supports" in candidate):
+            data = candidate
+        position = text.find("{", end)
+    if data is None:
+        raise ValueError("judge reply has no JSON object with a verdict")
+    if "verdict" not in data and isinstance(data.get("supports"), bool):
+        data = {
+            "verdict": "supported" if data["supports"] else "unverifiable",
+            "reason": data.get("reason", ""),
+        }
+    if isinstance(data.get("verdict"), str):
+        data["verdict"] = data["verdict"].strip().lower()
+    return JudgeOutput.model_validate(data)
+
+
+def judge_request(claim: Claim, evidence_text: str, max_evidence_chars: int) -> str:
+    """The user message: the claim fields, then the evidence (its head, with the rest marked not shown, if too long)."""
+    evidence = evidence_text
+    if len(evidence) > max_evidence_chars:
+        evidence = f"{evidence[:max_evidence_chars]}\n[... {len(evidence) - max_evidence_chars} characters not shown ...]"
+    value = json.dumps(claim.value, ensure_ascii=False, sort_keys=True, default=str)
+    return (
+        "CLAIM\n"
+        f"kind: {claim.kind}\n"
+        f"text: {claim.text}\n"
+        f"value: {value}\n"
+        "\n"
+        "EVIDENCE\n"
+        f"{evidence if evidence.strip() else '(no evidence text)'}\n"
+    )
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _response_text(response: Any) -> str:
+    """The assistant message's output text only; reasoning items and blocks are skipped."""
+    parts: list[str] = []
+    for item in getattr(response, "output", None) or []:
+        if getattr(item, "type", None) != "message":
+            continue
+        for block in getattr(item, "content", None) or []:
+            text = getattr(block, "text", None)
+            if getattr(block, "type", None) == "output_text" and isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts)
+
+
+class LlmJudge:
+    """Model-backed L3 judge. Counts its own calls and dollars for the run."""
+
+    source = "llm"
+
+    def __init__(
+        self,
+        model: Any,
+        *,
+        model_name: str,
+        prompt: str,
+        price: PriceTable,
+        writer: JsonlWriter | None = None,
+        fallback: LexicalJudge | None = None,
+        max_evidence_chars: int = 24000,
+        extra_body: dict[str, Any] | None = None,
+    ) -> None:
+        self.model = model
+        self.model_name = model_name
+        self.prompt = prompt
+        self.prompt_sha256 = _sha256(prompt)
+        self.price = price
+        self.writer = writer
+        self.fallback = fallback if fallback is not None else LexicalJudge()
+        self.max_evidence_chars = max_evidence_chars
+        # Sent with every judge request (the reasoning setting); None sends nothing extra.
+        self.extra_body = dict(extra_body) if extra_body else None
+        self.calls = 0
+        self.cost_usd = 0.0
+        # Calls decided by the lexical judge because the model call or its parse failed.
+        self.fallbacks = 0
+
+    async def ajudge(self, claim: Claim, evidence_text: str) -> JudgeVerdict:
+        request = judge_request(claim, evidence_text, self.max_evidence_chars)
+        started = time.perf_counter()
+        raw: str | None = None
+        parsed: JudgeOutput | None = None
+        error: str | None = None
+        try:
+            response = await self.model.get_response(
+                system_instructions=self.prompt,
+                input=request,
+                model_settings=ModelSettings(temperature=TEMPERATURE, extra_body=self.extra_body),
+                tools=[],
+                output_schema=None,
+                handoffs=[],
+                tracing=ModelTracing.DISABLED,
+                previous_response_id=None,
+                conversation_id=None,
+                prompt=None,
+            )
+            raw = _response_text(response)
+            parsed = parse_judge_output(raw)
+        except (ProviderMismatch, BudgetError):
+            # An off-pin call stops the run; a call refused at the cost ceiling or cap ends it.
+            # Neither may fall back to the lexical judge silently.
+            raise
+        except (ValidationError, ValueError) as exc:
+            error = f"unparseable judge reply: {exc}"[:500]
+        except Exception as exc:  # noqa: BLE001 - other errors fall back to the lexical judge
+            from evcarry.runs.infra import is_infrastructure_error
+
+            if is_infrastructure_error(exc):
+                # A19 (2026-10-25): a provider-route failure ends the run (status infra_error) instead of
+                # silently switching this claim to the lexical judge.
+                raise
+            error = f"{type(exc).__name__}: {exc}"[:500]
+        latency_ms = (time.perf_counter() - started) * 1000
+        take = getattr(self.model, "take_record", None)
+        record = take() if callable(take) else None
+        tokens = record.usage.as_dict() if record is not None else None
+        # Priced at the endpoint that served the call, and never below OpenRouter's own cost.
+        priced = record.cost(self.price, datetime.now(timezone.utc)) if record is not None else None
+        cost = priced.usd if priced is not None else 0.0
+        self.calls += 1
+        self.cost_usd += cost
+        detail = {
+            "model": self.model_name,
+            "served_model": record.identity.served_model if record is not None else None,
+            "prompt_sha256": self.prompt_sha256,
+            "request_sha256": _sha256(request),
+            "latency_ms": round(latency_ms, 1),
+            "cost_usd": cost,
+        }
+        if parsed is not None:
+            verdict = JudgeVerdict(
+                supports=parsed.verdict == "supported",
+                reason=parsed.reason,
+                source=self.source,
+                verdict=parsed.verdict,
+                missing=list(parsed.missing),
+                detail=detail,
+            )
+        else:
+            self.fallbacks += 1
+            backup = self.fallback.judge(claim, evidence_text)
+            verdict = JudgeVerdict(
+                supports=backup.supports,
+                reason=f"{backup.reason} (LLM judge failed: {error})",
+                source="lexical_fallback",
+                verdict=None,
+                detail={**detail, "error": error},
+            )
+        writer = self.writer or current_writer.get()
+        if writer is not None:
+            writer.write(
+                {
+                    "type": "judge_call",
+                    "claim_id": claim.claim_id,
+                    **(current_audit.get() or {}),
+                    "judge_model": self.model_name,
+                    **(record.provenance() if record is not None else {"served_model": None}),
+                    "temperature": record.temperature if record is not None else None,
+                    # finish_reason, native_finish_reason, truncated, reasoning sent, reasoning_tokens (C9).
+                    **(record.stop_fields() if record is not None else {"finish_reason": None, "truncated": None}),
+                    "judge_extra_body": self.extra_body,
+                    "prompt_sha256": self.prompt_sha256,
+                    "request_sha256": detail["request_sha256"],
+                    "request_chars": len(request),
+                    # What the judge saw, so the verdict can be hand-labelled or re-judged later
+                    # (scripts/judge_validation.py).
+                    "claim": claim.model_dump(mode="json"),
+                    "request": request,
+                    "raw_reply": (raw or "")[:4000],
+                    "verdict": verdict.verdict,
+                    "supports": verdict.supports,
+                    "missing": verdict.missing,
+                    "reason": verdict.reason,
+                    "source": verdict.source,
+                    "error": error,
+                    "tokens": tokens,
+                    **(priced.fields() if priced is not None else {"cost_usd": 0.0, "provider_reported_cost_usd": None}),
+                    "latency_ms": detail["latency_ms"],
+                }
+            )
+        return verdict
+
+
+async def run_judge(judge: Any, claim: Claim, evidence_text: str) -> JudgeVerdict:
+    """Call ``ajudge`` when the judge has one, else the synchronous ``judge``."""
+    ajudge = getattr(judge, "ajudge", None)
+    if ajudge is not None:
+        return await ajudge(claim, evidence_text)
+    return judge.judge(claim, evidence_text)
+
+
+def build_judge(
+    name: str | None,
+    *,
+    writer: JsonlWriter | None = None,
+    models: dict[str, Any] | None = None,
+    prompt_file: str = JUDGE_PROMPT,
+) -> LexicalJudge | LlmJudge:
+    """``lexical`` (or empty) gives the lexical judge; any other name is a ``configs/models.yaml`` key."""
+    if not name or name == "lexical":
+        return LexicalJudge()
+    from evcarry.providers.registry import build_model, load_models
+    from evcarry.providers.scripted import KeyedFixtureModel
+
+    catalog = models if models is not None else load_models()
+    if name not in catalog:
+        raise KeyError(f"unknown judge model {name}; use 'lexical' or a key from configs/models.yaml")
+    config = catalog[name]
+    if config.kind == "scripted":
+        if not config.script:
+            raise ValueError(f"scripted judge {name} needs a `script` file")
+        script = json.loads(resolve_repo_path(config.script).read_text(encoding="utf-8"))
+        model: Any = KeyedFixtureModel(script, agent_name="judge")
+    else:
+        model = build_model(config, agent_name="judge")
+        model.role = "judge"  # its failed calls count as judge cost in run_end
+    prompt = resolve_repo_path(prompt_file).read_text(encoding="utf-8")
+    return LlmJudge(
+        model, model_name=name, prompt=prompt, price=config.price_table(), writer=writer, extra_body=config.judge_extra_body
+    )

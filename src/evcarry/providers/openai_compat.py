@@ -10,9 +10,13 @@ cache tokens are taken from the response body captured by an httpx hook.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import random
 import time
+from collections.abc import Callable, Sequence
 from collections import deque
+from datetime import datetime, timezone
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,14 +25,47 @@ import httpx2
 from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
-from openai import AsyncOpenAI
+from openai import APIConnectionError, AsyncOpenAI, InternalServerError, RateLimitError
 from openai.types.responses.response_prompt_param import ResponsePromptParam
 
 from evcarry.providers.identity import ServedIdentity, served_identity
-from evcarry.providers.usage import TokenUsage, token_usage_from_body
+from evcarry.providers.pin import PinCheck, ProviderMismatch, check_pin, current_pin_guard, provider_slug
+from evcarry.providers.usage import CallCost, PriceTable, TokenUsage, call_cost, token_usage_from_body
+from evcarry.runs.budget import admit_model_call
+from evcarry.trace.writer import current_writer
 
 # One bucket per in-flight get_response, so concurrent calls do not share attempts.
 _HTTP_BODIES: ContextVar[list[dict[str, Any]] | None] = ContextVar("evcarry_http_bodies", default=None)
+
+# Waits between attempts of one model call after a 429, a 5xx or a dropped connection. Each attempt
+# is the OpenAI client's request with its own two quick retries (about 4 s), and on the endpoint-set
+# route OpenRouter already moves a 429 to the next endpoint inside one request. DeepInfra's shared pool
+# answered "engine_overloaded" 429s for minutes at a time during the pilot (2026-10-24), and a run that
+# fails mid-way is redone from scratch, so a call keeps trying for about 10 minutes. Waits grow
+# exponentially from 2 s and are capped at 60 s, so a call never sleeps for minutes after the provider
+# has recovered; each wait is drawn from [c/2, c] ("equal jitter") so parallel runs that hit the same
+# 429 do not retry in lockstep. Unanswered requests are not billed. The same for every arm and the judge.
+RETRY_BASE_S = 2.0
+RETRY_CAP_S = 60.0
+RETRY_WINDOW_S = 600.0
+_RETRYABLE = (RateLimitError, InternalServerError, APIConnectionError)
+
+
+def jittered_waits(
+    *,
+    base: float = RETRY_BASE_S,
+    cap: float = RETRY_CAP_S,
+    window: float = RETRY_WINDOW_S,
+    rng: random.Random | None = None,
+) -> list[float]:
+    """Equal-jitter exponential backoff: wait n is drawn from [c/2, c], c = min(cap, base * 2**n), until the waits sum to ``window``."""
+    draw = rng or random
+    waits: list[float] = []
+    while sum(waits) < window:
+        ceiling = min(cap, base * 2 ** len(waits))
+        waits.append(ceiling / 2 + draw.uniform(0, ceiling / 2))
+    return waits
+
 
 _ROUTING_KEYS = (
     "order",
@@ -53,30 +90,83 @@ class LlmCallRecord:
     attempts: int
     latency_ms: float
     system_instructions: str | None = None
+    pin: PinCheck | None = None
+    # The sampling temperature the request carried (None: not sent, so the provider default applied).
+    temperature: float | None = None
+    # The ``reasoning`` object the request carried (None: not sent, so the provider default applied).
+    reasoning: dict[str, Any] | None = None
+    # Why the provider stopped generating (``stop``, ``tool_calls``, ``length``, ...) and OpenRouter's
+    # ``native_finish_reason``; ``truncated`` is True when the reply was cut at its token limit.
+    finish_reason: str | None = None
+    native_finish_reason: str | None = None
+    reasoning_tokens: int | None = None
+
+    @property
+    def truncated(self) -> bool | None:
+        if self.finish_reason is None and self.native_finish_reason is None:
+            return None
+        return "length" in (self.finish_reason, self.native_finish_reason) or self.native_finish_reason == "max_tokens"
+
+    def stop_fields(self) -> dict[str, object]:
+        """``finish_reason``, ``native_finish_reason``, ``truncated``, ``reasoning`` and ``reasoning_tokens`` for a trace event (C9, C6)."""
+        return {
+            "finish_reason": self.finish_reason,
+            "native_finish_reason": self.native_finish_reason,
+            "truncated": self.truncated,
+            "reasoning": self.reasoning,
+            "reasoning_tokens": self.reasoning_tokens,
+        }
 
     def as_dict(self) -> dict[str, object]:
         return {
             "configured_model": self.configured_model,
             "kind": self.kind,
-            "served_model": self.identity.served_model,
-            "served_provider": self.identity.served_provider,
-            "provider_unobserved": self.identity.provider_unobserved,
-            "router": self.identity.router,
+            **self.identity.as_dict(),
             "routing": self.routing,
             "attempts": self.attempts,
             "latency_ms": self.latency_ms,
             "usage": self.usage.as_dict(),
+            "provider_check": self.pin.as_dict() if self.pin is not None else None,
+            "temperature": self.temperature,
+            **self.stop_fields(),
+        }
+
+    def cost(self, price: PriceTable, at: datetime) -> CallCost:
+        """Priced at the endpoint that served the call; two disagreeing provider names get the table's upper bound."""
+        names = {provider_slug(name): name for name in (self.identity.response_provider, self.identity.served_provider) if name}
+        provider = next(iter(names.values())) if len(names) == 1 else None
+        return call_cost(self.usage, price, at, provider)
+
+    def provenance(self) -> dict[str, object]:
+        """Who served the call: the fields ``llm_call``, ``llm_error`` and ``judge_call`` events share."""
+        return {
+            "served_model": self.identity.served_model,
+            "served_provider": self.identity.served_provider,
+            "response_provider": self.identity.response_provider,
+            "provider_unobserved": self.identity.provider_unobserved,
+            "generation_id": self.identity.generation_id,
+            "service_tier": self.identity.service_tier,
+            "quantization": self.identity.quantization,
+            "provider_check": self.pin.as_dict() if self.pin is not None else None,
         }
 
 
 def routing_extra_body(routing: dict[str, Any] | None) -> dict[str, Any]:
-    """OpenRouter ``provider`` object. Unknown keys are dropped."""
+    """OpenRouter ``provider`` object, plus a top-level ``service_tier`` when the routing names one. Unknown keys are dropped.
+
+    ``service_tier: default`` matters for a pinned open-weight model: OpenRouter lets a
+    provider's priority endpoint (``deepinfra/fp8/priority``) compete for default traffic
+    under its base slug, at a higher price, unless the request pins the standard tier.
+    """
     if not routing:
         return {}
+    body: dict[str, Any] = {}
     provider = {key: routing[key] for key in _ROUTING_KEYS if key in routing}
-    if not provider:
-        return {}
-    return {"provider": provider}
+    if provider:
+        body["provider"] = provider
+    if routing.get("service_tier"):
+        body["service_tier"] = str(routing["service_tier"])
+    return body
 
 
 def openrouter_headers(*, http_referer: str | None, x_title: str | None) -> dict[str, str]:
@@ -96,8 +186,46 @@ def openrouter_headers(*, http_referer: str | None, x_title: str | None) -> dict
     return headers
 
 
+def sent_reasoning(request: httpx2.Request) -> dict[str, Any] | None:
+    """The ``reasoning`` object in a request's JSON body, or None when the request did not send one."""
+    try:
+        body = json.loads(request.content)
+    except Exception:
+        return None
+    value = body.get("reasoning") if isinstance(body, dict) else None
+    return dict(value) if isinstance(value, dict) else None
+
+
+def finish_fields(body: Any) -> tuple[str | None, str | None, int | None]:
+    """``(finish_reason, native_finish_reason, reasoning_tokens)`` of a chat-completions response body."""
+    if not isinstance(body, dict):
+        return None, None, None
+    choices = body.get("choices")
+    first = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    finish = first.get("finish_reason")
+    native = first.get("native_finish_reason")
+    usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    details = usage.get("completion_tokens_details") if isinstance(usage.get("completion_tokens_details"), dict) else {}
+    reasoning = details.get("reasoning_tokens")
+    return (
+        str(finish) if finish is not None else None,
+        str(native) if native is not None else None,
+        int(reasoning) if isinstance(reasoning, (int, float)) and not isinstance(reasoning, bool) else None,
+    )
+
+
+def sent_temperature(request: httpx2.Request) -> float | None:
+    """The ``temperature`` in a request's JSON body, or None when the request did not send one."""
+    try:
+        body = json.loads(request.content)
+    except Exception:
+        return None
+    value = body.get("temperature") if isinstance(body, dict) else None
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
 async def capture_http_body(response: httpx2.Response) -> None:
-    """Append each HTTP response JSON to the current call's bucket."""
+    """Append each HTTP response JSON, and the temperature its request sent, to the current call's bucket."""
     bucket = _HTTP_BODIES.get()
     if bucket is None:
         return
@@ -107,7 +235,14 @@ async def capture_http_body(response: httpx2.Response) -> None:
     except Exception:
         return
     if isinstance(payload, dict):
-        bucket.append({"status": response.status_code, "body": payload})
+        bucket.append(
+            {
+                "status": response.status_code,
+                "body": payload,
+                "temperature": sent_temperature(response.request),
+                "reasoning": sent_reasoning(response.request),
+            }
+        )
 
 
 def http_client_with_capture(**kwargs: Any) -> httpx2.AsyncClient:
@@ -145,14 +280,25 @@ class RecordingModel(OpenAIChatCompletionsModel):
         kind: str,
         routing: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
+        price: PriceTable | None = None,
+        agent_extra_body: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(model=model, openai_client=openai_client)
+        # Request body every agent call carries (C6, 2026-10-25: the reasoning effort, pinned instead of the
+        # provider default). Not sent while ``role`` is "judge": the judge sends its own ``judge_extra_body``.
+        self.agent_extra_body = dict(agent_extra_body) if agent_extra_body else None
         self.kind = kind
+        # Prices a call that was answered (and billed) but then failed in the SDK.
+        self.price = price
+        # "agent" or "judge": which run_end cost a failed call belongs to.
+        self.role = "agent"
         self.configured_model = model if isinstance(model, str) else str(model)
         self.routing = dict(routing) if routing else None
         self.extra_headers = dict(extra_headers or {})
         self.history: list[LlmCallRecord] = []
         self._pending: deque[LlmCallRecord] = deque()
+        # Waits between attempts, drawn afresh for each call (tests set a fixed sequence).
+        self.retry_waits: Callable[[], Sequence[float]] | Sequence[float] = jittered_waits
 
     def take_record(self) -> LlmCallRecord | None:
         if not self._pending:
@@ -162,6 +308,8 @@ class RecordingModel(OpenAIChatCompletionsModel):
     def _merge_settings(self, model_settings: ModelSettings) -> ModelSettings:
         pinned = routing_extra_body(self.routing)
         body = dict(model_settings.extra_body or {})
+        if self.role == "agent" and self.agent_extra_body:
+            body = {**self.agent_extra_body, **body}
         if "provider" in pinned and isinstance(body.get("provider"), dict):
             # The model config's routing wins over a per-call provider object.
             provider = {**body["provider"], **pinned["provider"]}
@@ -177,11 +325,13 @@ class RecordingModel(OpenAIChatCompletionsModel):
             extra_headers=headers or None,
         )
 
-    def _record(self, bucket: list[dict[str, Any]], started: float, system_instructions: str | None) -> None:
+    def _record(self, bucket: list[dict[str, Any]], started: float, system_instructions: str | None) -> LlmCallRecord:
         successes = [item for item in bucket if 200 <= int(item.get("status", 0)) < 300]
-        chosen = successes[-1]["body"] if successes else (bucket[-1]["body"] if bucket else None)
+        attempt = successes[-1] if successes else (bucket[-1] if bucket else None)
+        chosen = attempt["body"] if attempt else None
         identity = served_identity(chosen, kind=self.kind, configured_model=self.configured_model)
         usage = token_usage_from_body(chosen if isinstance(chosen, dict) else None)
+        finish, native, reasoning_tokens = finish_fields(chosen) if successes else (None, None, None)
         record = LlmCallRecord(
             configured_model=self.configured_model,
             kind=self.kind,
@@ -191,9 +341,51 @@ class RecordingModel(OpenAIChatCompletionsModel):
             attempts=len(bucket),
             latency_ms=(time.perf_counter() - started) * 1000,
             system_instructions=system_instructions,
+            pin=check_pin(identity, self.routing) if successes else None,
+            temperature=attempt.get("temperature") if attempt else None,
+            reasoning=attempt.get("reasoning") if attempt else None,
+            finish_reason=finish,
+            native_finish_reason=native,
+            reasoning_tokens=reasoning_tokens,
         )
         self.history.append(record)
-        self._pending.append(record)
+        return record
+
+    def _trace_failure(self, record: LlmCallRecord, bucket: list[dict[str, Any]], error: BaseException) -> None:
+        """An ``llm_error`` event for a call that raised. ``on_llm_end`` never sees it.
+
+        Tokens and served model are reported only when a 2xx body was captured
+        (the call was answered and billed, then failed in the SDK).
+        """
+        writer = current_writer.get()
+        if writer is None:
+            return
+        answered = any(200 <= int(item.get("status", 0)) < 300 for item in bucket)
+        # An answered call was billed: its cost counts toward the spend cap like an llm_call's.
+        if answered and self.price:
+            cost = record.cost(self.price, datetime.now(timezone.utc)).fields()
+        else:
+            reported = record.usage.provider_reported_cost_usd if answered else None
+            billed = max(0.0, reported or 0.0)
+            cost = {"cost_usd": billed, "provider_reported_cost_usd": reported, "reference_cost_usd": billed}
+        writer.write(
+            {
+                "type": "llm_error",
+                "role": self.role,
+                "configured_model": record.configured_model,
+                "kind": record.kind,
+                "error_type": type(error).__name__,
+                "error": str(error)[:1000],
+                "attempts": record.attempts,
+                "statuses": [item.get("status") for item in bucket],
+                **(record.provenance() if answered else {"served_model": None}),
+                "tokens": record.usage.as_dict() if answered else None,
+                "temperature": record.temperature,
+                **record.stop_fields(),
+                **cost,
+                "latency_ms": record.latency_ms,
+            }
+        )
 
     async def get_response(
         self,
@@ -208,25 +400,63 @@ class RecordingModel(OpenAIChatCompletionsModel):
         conversation_id: str | None = None,
         prompt: ResponsePromptParam | None = None,
     ) -> Any:
+        guard = current_pin_guard.get()
+        if guard is not None:
+            guard.raise_if_violated()  # no further paid calls once the run broke its pin
+        admit_model_call()  # no further calls once the run is at its cost ceiling or the experiment at its cap
         bucket: list[dict[str, Any]] = []
         token = _HTTP_BODIES.set(bucket)
         started = time.perf_counter()
+        waits = self.retry_waits() if callable(self.retry_waits) else self.retry_waits
         try:
-            return await super().get_response(
-                system_instructions,
-                input,
-                self._merge_settings(model_settings),
-                tools,
-                output_schema,
-                handoffs,
-                tracing,
-                previous_response_id=previous_response_id,
-                conversation_id=conversation_id,
-                prompt=prompt,
-            )
+            for wait in (*waits, None):
+                try:
+                    response = await super().get_response(
+                        system_instructions,
+                        input,
+                        self._merge_settings(model_settings),
+                        tools,
+                        output_schema,
+                        handoffs,
+                        tracing,
+                        previous_response_id=previous_response_id,
+                        conversation_id=conversation_id,
+                        prompt=prompt,
+                    )
+                    break
+                except _RETRYABLE:
+                    if wait is None:
+                        raise
+                    await asyncio.sleep(wait)  # every HTTP status lands in the bucket: attempts and statuses show the retries
+        except BaseException as error:
+            # Not queued for take_record: on_llm_end does not run for a failed call, so a
+            # queued record would be paired with the next successful call and that
+            # call's tokens and served model would be logged as this one's (zero, requested id).
+            failed = self._record(bucket, started, system_instructions)
+            if failed.pin is not None and failed.pin.ok is False:
+                self._refuse(failed, bucket)  # answered off-pin, then failed in the SDK
+            self._trace_failure(failed, bucket, error)
+            raise
         finally:
-            self._record(bucket, started, system_instructions)
             _HTTP_BODIES.reset(token)
+        record = self._record(bucket, started, system_instructions)
+        if record.pin is not None and record.pin.ok is False:
+            self._refuse(record, bucket)
+        self._pending.append(record)
+        return response
+
+    def _refuse(self, record: LlmCallRecord, bucket: list[dict[str, Any]]) -> None:
+        """Log the off-pin call (it was billed) and stop the run: this reply is never used."""
+        reason = record.pin.reason if record.pin is not None else "provider pin broken"
+        error = ProviderMismatch(f"{self.configured_model}: {reason}")
+        writer = current_writer.get()
+        if writer is not None:
+            writer.write({"type": "provider_mismatch", "configured_model": self.configured_model, **record.provenance()})
+        self._trace_failure(record, bucket, error)
+        guard = current_pin_guard.get()
+        if guard is not None:
+            guard.violate(reason)
+        raise error
 
     def stream_response(
         self,

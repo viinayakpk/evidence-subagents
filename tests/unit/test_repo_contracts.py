@@ -19,7 +19,10 @@ from evcarry.trace.writer import JsonlWriter, current_writer
 def test_task_list_hashes_and_loader() -> None:
     root = repo_root()
     sums = (root / "tasks" / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
-    assert len(sums) == 3
+    # pool160, subset70, pilot10, and (2026-10-25) the headline60 / dev split.
+    assert [line.split("  ", 1)[1] for line in sums] == [
+        "tasks/pool160.txt", "tasks/subset70.txt", "tasks/pilot10.txt", "tasks/headline60.txt", "tasks/dev.txt",
+    ]
     for line in sums:
         digest, name = line.split("  ", 1)
         path = root / name
@@ -51,11 +54,12 @@ def test_prompt_bytes_and_sorted_tools() -> None:
     assert names == sorted(names)
 
 
-def test_docker_plan_refuses_without_flag(monkeypatch) -> None:
+def test_docker_plan_and_refusal_without_docker(monkeypatch) -> None:
     plan = DockerIsolation().plan()
     assert any("run_parallel.sh" in part for part in plan)
-    monkeypatch.delenv("EVCARRY_TOOLATHLON_DOCKER", raising=False)
-    with pytest.raises(EnvironmentUnavailable):
+    assert any("evcarry/toolathlon-gym:ed735ba" in part for part in plan)
+    monkeypatch.setenv("EVCARRY_DOCKER", "/nonexistent/docker")
+    with pytest.raises(EnvironmentUnavailable, match="not installed"):
         DockerIsolation().up()
 
 
@@ -117,3 +121,18 @@ def test_flips_labels_and_mcnemar(tmp_path: Path) -> None:
 def test_live_provider_opt_in() -> None:
     if os.environ.get("EVCARRY_LIVE_PROVIDER") != "1":
         pytest.skip("set EVCARRY_LIVE_PROVIDER=1 to call a real endpoint")
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["evcarry.runs.budget", "evcarry.providers.openai_compat", "evcarry.providers.scripted", "evcarry.protocol.judge", "evcarry.runs.manager"],
+)
+def test_each_spend_module_imports_first_in_a_fresh_interpreter(module: str) -> None:
+    """budget is imported by every model; importing providers from it at module level made `import evcarry.runs.budget` fail."""
+    import os
+    import subprocess
+    import sys
+
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    result = subprocess.run([sys.executable, "-c", f"import {module}"], capture_output=True, text=True, env=env, check=False)
+    assert result.returncode == 0, result.stderr[-1500:]

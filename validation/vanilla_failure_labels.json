@@ -1,0 +1,30 @@
+{
+  "codebook": "docs/FAILURE_CODEBOOK.md",
+  "labelled": "2026-10-25, by hand from traces, grader logs and docs/PILOT_DIAGNOSIS.md, with the SA run on the same task as a reference",
+  "labels": [
+    {"run": "pilot_deepseek", "task": "canvas-module-completion-notion-gcal", "seed": 1,
+     "label": "other", "subtype": "grader_defect", "mast": null, "ms_eval_dfp": false,
+     "evidence": "Grader reads each Notion property's \"type\" key, which the mock did not store (fixed later by A10's mock patch); 'Found modules: []'. SA fails with the same lines."},
+    {"run": "pilot_deepseek", "task": "canvas-quiz-analysis-ppt", "seed": 1,
+     "label": "not_a_failure", "subtype": "contamination_flag_false_positive", "mast": null, "ms_eval_dfp": false,
+     "evidence": "Grader passed; the run was failed only by the bare /workspace/tasks marker, which the registered two-tier rule (A9) does not count (6 own-directory reads, nothing obtained)."},
+    {"run": "pilot_deepseek", "task": "fetch-sf-hr-training-notion-gcal-excel", "seed": 1,
+     "label": "other", "subtype": "grader_defect", "mast": null, "ms_eval_dfp": false,
+     "evidence": "Same Notion property parser; grader hard-codes R&D while raw warehouse averages put Support (3.1956) below R&D (3.1968). The researcher's averages were correct and cited."},
+    {"run": "pilot_deepseek", "task": "sf-sales-region-analysis-gsheet-email", "seed": 1,
+     "label": "spec_misreading", "subtype": "main_agent_interpretation", "mast": "FM-1.1", "ms_eval_dfp": false,
+     "evidence": "Totals exclude cancelled orders (Europe 3914 vs expected 4100); the grader counts all statuses. Every arm fails the same way, and the docx check cannot see a table (A10 docx rule, excluded in sensitivity)."},
+    {"run": "pilot_deepseek", "task": "terminal-arxiv-latex-excel-word-notion", "seed": 1,
+     "label": "spec_misreading", "subtype": "output_format_and_scope", "mast": "FM-1.1", "ms_eval_dfp": "unresolved",
+     "evidence": "Key_Innovation sentences over 200 characters and the LoRA noise paper included (spec violations by the writing agent). One check, the missing BERT->Transformer citation pair, may come from an incomplete sub-agent report; not confirmed from the trace."},
+    {"run": "pilot_deepseek", "task": "wc-shipping-analysis", "seed": 1,
+     "label": "other", "subtype": "no_claim_done_and_grader_defect", "mast": "FM-1.5", "ms_eval_dfp": false,
+     "evidence": "Run ended without claim_done (graded fail); the grader also requires header 'zone' where the spec says 'Zone name', so SA, self_verify and evidence fail with the same three errors."},
+    {"run": "dev_verify_v1", "task": "sf-support-metrics-pdf-email", "seed": 1,
+     "label": "other", "subtype": "grader_defect", "mast": null, "ms_eval_dfp": false,
+     "evidence": "Grader imports PDF libraries the grading Python lacks (A13; task dropped from dev); 44 errors for SA and vanilla alike."},
+    {"run": "dev_verify_v2", "task": "train-sf-sales-trip-excel-word-email", "seed": 1,
+     "label": "spec_misreading", "subtype": "main_agent_interpretation", "mast": "FM-1.1", "ms_eval_dfp": false,
+     "evidence": "Customer_Priority ranks 3-5 wrong (Isabella Smith, Mason Garcia missing) from the cancelled-orders interpretation; SA fails identically; vanilla passed the same task in dev_verify_v1."}
+  ]
+}

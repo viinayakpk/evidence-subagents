@@ -1,0 +1,17 @@
+# Scripted model on three real Toolathlon-Gym tasks, each in its own containers.
+# $0 and no API key. Needs Docker and the gym images (make gym-images).
+experiment: gym_mock
+tasks: tests/fixtures/tasks/gym3.txt
+arms: [sa, vanilla_mad, evidence_risk]
+seeds: [1]
+model: mock
+audit: {sampler: risk, rate: 1.0, checks: [L0, L1, L2, L3]}
+judge_model: mock_judge
+limits: {max_steps: 20, max_seconds: 600, context: 32000}
+prompts: prompts/gym_v1
+budget: {cap_usd: 0, schedule: any}
+parallel_tasks: 3
+out: runs/gym_mock
+environment: docker
+task_root: third_party/toolathlon_gym/tasks/finalpool
+script_dir: tests/fixtures/scripts/gym

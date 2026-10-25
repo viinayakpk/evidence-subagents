@@ -1,0 +1,8 @@
+# Broken-grader exclusions (plan amendment A17, 2026-10-25), from scripts/grader_exclusions.py.
+# Rules: A13 grader imports a module the grading Python lacks; docx-table rule (A10/P2-4).
+# Primary analysis keeps all tasks; the sensitivity analysis drops the tasks listed here.
+# headline60: 0 flagged
+# pilot10: 2 flagged
+sf-hr-compensation-pdf-notion  # pilot10: A13 missing PyPDF2,pdfplumber,pypdf
+sf-sales-region-analysis-gsheet-email  # pilot10: docx table not read
+# dev: 0 flagged

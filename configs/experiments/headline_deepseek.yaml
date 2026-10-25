@@ -1,14 +1,29 @@
+# DeepSeek-V4.1-Flash-1017 through OpenRouter, pinned to a fixed set of fp8 endpoints, DeepInfra first (openrouter_ds_1017).
+# The L3 judge is the same model: billed, and counted toward the cap. Needs OPENROUTER_API_KEY.
+# The OpenRouter price table has no peak windows; offpeak_only matters only if the model is switched back to deepseek_flash.
+# Pre-registered 2026-10-25 (docs/plan/EXPERIMENT_PLAN.md, amendments A1-A9), before any headline run:
+# - tasks: subset70 minus pilot10 (60 tasks), the primary analysis; pilot10 is reported separately (split evcarry-split-v1).
+# - 100 turns for the main agent and every sub-agent run, every arm (the gym's MAX_STEPS default; was 40).
+# - one per-run ceiling for every arm, priced at DeepInfra fp8 rates whichever endpoint served (reference basis):
+#   $0.17, the pilot's token budget ($0.25 billed at the pilot's provider mix). The cap counts billed dollars; each run in
+#   flight reserves 1.2 x $0.17 x 1.6 = $0.33 billed (1.6: billed per reference dollar on InferenceNet alone, pilot 1.53).
+# - limits.context is enforced in every arm (harness.context).
+# - the agent container has no internet and no gym tree during the run (gym.network_internal, gym.hide_task_dir):
+#   needs the gym images rebuilt after 2026-10-25 (make gym-images).
 experiment: headline_deepseek_v1
-tasks: tasks/subset70.txt
+tasks: tasks/headline60.txt
 arms: [sa, vanilla_mad, self_verify, evidence_risk]
 seeds: [1, 2]
-model: deepseek_flash
+model: openrouter_ds_1017
 audit: {sampler: risk, rate: 0.3, checks: [L0, L1, L2, L3]}
-judge_model: local_primary
-limits: {max_steps: 100, max_seconds: 7200, context: 131072}
-prompts: prompts/v1
-budget: {cap_usd: 80, schedule: offpeak_only}
+judge_model: openrouter_ds_1017
+limits: {max_steps: 100, subagent_max_turns: 100, max_seconds: 7200, context: 131072}
+prompts: prompts/gym_v1
+require_frozen_prompts: true
+# A run whose reference-priced spend (agent + judge) reaches $0.17 is stopped: status cost_ceiling, counted as failed.
+budget: {cap_usd: 45, run_ceiling_usd: 0.17, ceiling_basis: reference, reserve_billed_per_reference: 1.6, schedule: offpeak_only}  # owner ceiling: $50 total with the $5 pilot
 parallel_tasks: 8
 out: runs/headline_deepseek_v1
 environment: docker
 task_root: third_party/toolathlon_gym/tasks/finalpool
+gym: {network_internal: true, hide_task_dir: true, agent_db_readonly: true}  # A20: agent code cannot write the database

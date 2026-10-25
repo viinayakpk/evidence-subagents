@@ -1,0 +1,27 @@
+# Fix verification on the dev tasks (split evcarry-split-v1, pre-registered 2026-10-25): the two tasks of
+# tasks/dev.txt, drawn by rule evcarry-dev-v1 (amended by A13, 2026-10-25) from pool160 minus subset70, never pilot10:
+# train-sf-sales-trip-excel-word-email and gcal-snowflake-deadline-tracker. Same settings as the headline
+# (100 turns, reference-priced $0.17 ceiling, enforced 131k context, no internet, no gym tree), one seed.
+# v1 ran on 2026-10-25 ($0.2621, runs/dev_verify_v1, docs/DEV_CHECK_REVIEW.md). v2 is not run yet: it checks the
+# fixes after v1 (cited ids without prefix, backslash spans, run status, A13, A14). Expected spend about $0.25-0.35;
+# the cap stops it at $1.50. Needs OPENROUTER_API_KEY and the gym images rebuilt after 2026-10-25 (make gym-images).
+#   set -a; source .env; set +a; uv run evcarry run configs/experiments/dev_verify.yaml
+experiment: dev_verify_v2
+tasks: tasks/dev.txt
+arms: [sa, vanilla_mad, self_verify, evidence_risk]
+seeds: [1]
+model: openrouter_ds_1017
+audit: {sampler: risk, rate: 0.3, checks: [L0, L1, L2, L3]}
+judge_model: openrouter_ds_1017
+limits: {max_steps: 100, subagent_max_turns: 100, max_seconds: 7200, context: 131072}
+prompts: prompts/gym_v1
+# Dev runs exist to check the fixes before the prompts are frozen.
+require_frozen_prompts: false
+budget: {cap_usd: 1.5, run_ceiling_usd: 0.17, ceiling_basis: reference, reserve_billed_per_reference: 1.6, schedule: offpeak_only}
+# Two tasks x four arms. The reserve ($0.33 billed per run in flight) lets four runs start at once under the $1.50 cap:
+# the grid is task-major, so the four arms of a task start together and meet the same provider conditions.
+parallel_tasks: 8
+out: runs/dev_verify_v2
+environment: docker
+task_root: third_party/toolathlon_gym/tasks/finalpool
+gym: {network_internal: true, hide_task_dir: true, agent_db_readonly: true}  # A20: agent code cannot write the database

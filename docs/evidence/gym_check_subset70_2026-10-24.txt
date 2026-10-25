@@ -1,0 +1,77 @@
+docker: /usr/bin/docker
+agent image: evcarry/toolathlon-gym:ed735ba
+postgres image: evcarry/toolathlon-gym-pg:ed735ba
+leftover containers: none; networks: none
+ok: docker-environment experiments can start
+ok   12306-howtocook-team-trip-catering-excel-gcal: 89 tools, setup 19.98s
+ok   12306-yf-investor-roadshow-excel-ppt-email: 107 tools, setup 8.83s
+WARN academic-conference-planning-coordination: 174 tools, setup 4.92s [175 tools for the SA agent (over 128)]
+ok   academic-literature-review: 91 tools, setup 13.41s
+ok   academic-presentation-builder: 115 tools, setup 7.67s
+ok   arxiv-latex-reasoning-gsheet: 93 tools, setup 4.21s
+ok   arxiv-lit-review-gsheet: 54 tools, setup 12.74s
+ok   arxiv-method-benchmark-tracker: 83 tools, setup 15.71s
+ok   arxiv-research-pipeline-notion-excel: 72 tools, setup 14.11s
+WARN arxiv-research-workflow-pipeline: 129 tools, setup 13.62s [130 tools for the SA agent (over 128)]
+WARN canvas-assignment-effectiveness-ppt-notion-email: 177 tools, setup 4.41s [178 tools for the SA agent (over 128)]
+WARN canvas-course-comparison: 129 tools, setup 4.32s [130 tools for the SA agent (over 128)]
+ok   canvas-course-feedback: 115 tools, setup 3.98s
+WARN canvas-exam-prep-scheduler: 132 tools, setup 6.02s [133 tools for the SA agent (over 128)]
+WARN canvas-module-completion-notion-gcal: 134 tools, setup 2.04s [135 tools for the SA agent (over 128)]
+WARN canvas-quiz-analysis-ppt: 147 tools, setup 3.71s [148 tools for the SA agent (over 128)]
+WARN canvas-quiz-performance-gcal-gform: 131 tools, setup 4.45s [132 tools for the SA agent (over 128)]
+ok   ecommerce-market-benchmark: 115 tools, setup 7.48s
+ok   fetch-arxiv-survey-word-notion-email: 112 tools, setup 16.36s
+ok   fetch-canvas-assignment-workload-excel-gcal: 121 tools, setup 5.88s
+ok   fetch-sf-hr-training-notion-gcal-excel: 80 tools, setup 6.35s
+WARN fetch-sf-kpi-dashboard-excel-word-email: 140 tools, setup 5.89s [141 tools for the SA agent (over 128)]
+WARN fetch-wc-supplier-restock-excel-word-gcal: 156 tools, setup 5.65s [157 tools for the SA agent (over 128)]
+ok   howtocook-event-menu-ppt: 83 tools, setup 18.66s
+ok   howtocook-meal-plan-calendar: 70 tools, setup 20.31s
+ok   howtocook-weekly-gsheet-gcal: 70 tools, setup 25.83s
+WARN howtocook-wellness-tracker: 138 tools, setup 18.15s [139 tools for the SA agent (over 128)]
+ok   playwright-sf-hr-benefits-survey-gform-excel: 113 tools, setup 5.39s
+WARN pw-sf-benchmark-excel-word-email: 167 tools, setup 6.01s [168 tools for the SA agent (over 128)]
+ok   pw-sf-support-sla-benchmark-excel-gcal: 93 tools, setup 5.55s
+WARN pw-wc-customer-segment-gsheet-email: 148 tools, setup 5.58s [149 tools for the SA agent (over 128)]
+ok   sf-hr-attrition-gcal: 85 tools, setup 3.91s
+ok   sf-hr-compensation-pdf-notion: 58 tools, setup 3.02s
+ok   sf-hr-department-budget: 99 tools, setup 4.16s
+ok   sf-hr-performance-ppt: 92 tools, setup 3.84s
+ok   sf-hr-salary-overview: 64 tools, setup 3.87s
+ok   sf-quality-assurance-survey: 93 tools, setup 3.83s
+ok   sf-salary-market-benchmark: 115 tools, setup 5.78s
+ok   sf-sales-discount-gsheet-email: 74 tools, setup 4.18s
+ok   sf-sales-product-category: 74 tools, setup 4.66s
+WARN sf-sales-region-analysis-gsheet-email: 139 tools, setup 4.6s [140 tools for the SA agent (over 128)]
+ok   sf-sales-regional-summary: 74 tools, setup 4.09s
+ok   sf-support-agent-review: 74 tools, setup 4.17s
+WARN sf-wc-order-reconciliation-excel-word-email: 191 tools, setup 4.62s [192 tools for the SA agent (over 128)]
+ok   terminal-arxiv-latex-excel-word-notion: 124 tools, setup 13.91s
+WARN terminal-canvas-wc-excel-ppt-email: 229 tools, setup 4.44s [230 tools for the SA agent (over 128)]
+ok   terminal-howtocook-scholarly-excel-word-gform: 109 tools, setup 13.36s
+WARN terminal-wc-pw-pricing-excel-word-gcal: 188 tools, setup 5.49s [189 tools for the SA agent (over 128)]
+WARN terminal-wc-sf-revenue-reconcile-excel-ppt: 149 tools, setup 4.21s [150 tools for the SA agent (over 128)]
+WARN terminal-wc-yf-ppt-notion-email: 164 tools, setup 9.73s [165 tools for the SA agent (over 128)]
+WARN terminal-yf-canvas-excel-gcal-email: 152 tools, setup 10.06s [153 tools for the SA agent (over 128)]
+WARN wc-coupon-campaign-gcal-gform: 131 tools, setup 4.43s [132 tools for the SA agent (over 128)]
+WARN wc-customer-loyalty-word-gsheet: 144 tools, setup 4.03s [145 tools for the SA agent (over 128)]
+ok   wc-order-analysis-gcal: 101 tools, setup 3.72s
+WARN wc-product-bundle-excel-ppt-gcal: 149 tools, setup 4.24s [150 tools for the SA agent (over 128)]
+ok   wc-review-summary: 115 tools, setup 4.37s
+ok   wc-shipping-analysis: 121 tools, setup 4.46s
+WARN wc-shipping-tax-excel-word: 175 tools, setup 4.28s [176 tools for the SA agent (over 128)]
+WARN wc-shipping-zone-ppt: 152 tools, setup 4.12s [153 tools for the SA agent (over 128)]
+WARN wc-yf-commodity-pricing-impact: 166 tools, setup 12.12s [167 tools for the SA agent (over 128)]
+ok   yf-earnings-calendar-alert: 109 tools, setup 11.41s
+ok   yf-financial-health-excel-notion: 95 tools, setup 8.09s
+ok   yf-financial-statements-overview: 60 tools, setup 8.6s
+ok   yf-portfolio-gsheet-pdf-gcal-email: 86 tools, setup 12.89s
+ok   yf-portfolio-risk-excel: 53 tools, setup 10.32s
+ok   yf-sector-comparison-pdf: 60 tools, setup 7.78s
+ok   yf-stock-comparison-word-gcal: 110 tools, setup 8.32s
+ok   yt-engagement-analysis-gsheet-word: 123 tools, setup 4.09s
+ok   yt-ml-repos-github-notion-excel-email: 84 tools, setup 9.51s
+ok   yt-transcript-word-gform: 103 tools, setup 2.68s
+70/70 task environments started; logs in /home/vini/evidence-subagents/runs/gym_check
+exit 0

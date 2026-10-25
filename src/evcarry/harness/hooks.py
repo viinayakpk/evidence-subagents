@@ -9,9 +9,10 @@ from typing import Any
 
 from agents import RunHooks
 
+from evcarry.harness.context import current_trimmer
 from evcarry.harness.tools import meta_for
 from evcarry.ledger.ledger import Ledger
-from evcarry.providers.usage import PriceTable, cost_usd, is_peak
+from evcarry.providers.usage import PriceTable, is_peak
 from evcarry.trace.writer import JsonlWriter
 
 
@@ -20,15 +21,24 @@ def _sha256(text: str) -> str:
 
 
 class LedgerHooks(RunHooks):
-    """Record MCP tool calls and model calls for one run.
+    """Trace MCP tool calls and model calls for one run.
 
-    Agent-as-tool calls are skipped: the nested hooks see the real MCP calls.
+    The tools write the ledger themselves (``harness.tools``); this hook writes
+    the ``tool_call`` and ``llm_call`` trace events. Agent-as-tool calls are
+    skipped: the nested hooks see the real MCP calls.
     """
 
-    def __init__(self, ledger: Ledger, writer: JsonlWriter, price: PriceTable) -> None:
+    def __init__(
+        self,
+        ledger: Ledger,
+        writer: JsonlWriter,
+        price: PriceTable,
+        catalog: dict[str, Any] | None = None,
+    ) -> None:
         self.ledger = ledger
         self.writer = writer
         self.price = price
+        self.catalog = catalog
 
     async def on_llm_end(self, context: Any, agent: Any, response: Any) -> None:
         del context, response
@@ -37,6 +47,9 @@ class LedgerHooks(RunHooks):
         record = take() if take else None
         if record is None:
             return
+        trimmer = current_trimmer.get()
+        if trimmer is not None:
+            trimmer.calibrate(agent, record.usage.input_tokens)
         now = datetime.now(timezone.utc)
         system = record.system_instructions or ""
         self.writer.write(
@@ -44,17 +57,18 @@ class LedgerHooks(RunHooks):
                 "type": "llm_call",
                 "agent": getattr(agent, "name", ""),
                 "configured_model": record.configured_model,
-                "served_model": record.identity.served_model,
-                "served_provider": record.identity.served_provider,
-                "provider_unobserved": record.identity.provider_unobserved,
+                **record.provenance(),
                 "routing": record.routing,
                 "router": record.identity.router,
                 "attempts": record.attempts,
                 "tokens": record.usage.as_dict(),
-                "cost_usd": cost_usd(record.usage, self.price, now),
+                "temperature": record.temperature,
+                # finish_reason, native_finish_reason, truncated, reasoning sent, reasoning_tokens (C9, C6).
+                **record.stop_fields(),
+                # Priced at the endpoint that served the call, and never below OpenRouter's own cost.
+                **record.cost(self.price, now).fields(),
                 "latency_ms": record.latency_ms,
                 "peak": is_peak(now, self.price),
-                "provider_reported_cost_usd": record.usage.provider_reported_cost_usd,
                 "system_sha256": _sha256(system),
             }
         )
@@ -64,7 +78,7 @@ class LedgerHooks(RunHooks):
             return
         name = getattr(tool, "name", "")
         try:
-            meta = meta_for(name)
+            meta = meta_for(name, self.catalog)
         except KeyError:
             return
         call_id = getattr(context, "tool_call_id", "") or ""
@@ -73,23 +87,17 @@ class LedgerHooks(RunHooks):
             arguments = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
         except json.JSONDecodeError:
             arguments = {}
-        text = result if isinstance(result, str) else str(result)
-        self.ledger.record(
-            call_id=call_id,
-            tool_name=name,
-            arguments=arguments,
-            result_text=text,
-            read_only=meta.read_only,
-            readback_tool=meta.readback_tool,
-            readback_arguments=meta.readback_arguments,
-        )
+        entry = self.ledger.latest(call_id) if call_id else None
         self.writer.write(
             {
                 "type": "tool_call",
                 "agent": getattr(agent, "name", ""),
                 "tool": name,
                 "call_id": call_id,
+                "ledger_call_id": entry.call_id if entry is not None else None,
                 "read_only": meta.read_only,
                 "arguments": arguments,
+                "result_sha256": entry.sha256 if entry is not None else None,
+                "result_chars": len(entry.result_text) if entry is not None else None,
             }
         )

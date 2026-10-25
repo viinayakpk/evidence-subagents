@@ -23,6 +23,7 @@ from openai.types.responses.response_usage import InputTokensDetails
 from evcarry.providers.identity import ServedIdentity
 from evcarry.providers.openai_compat import LlmCallRecord
 from evcarry.providers.usage import TokenUsage, token_usage_from_counts
+from evcarry.runs.budget import admit_model_call
 
 
 class UnexpectedModelCall(RuntimeError):
@@ -92,6 +93,16 @@ class FixtureModel(Model):
             return None
         return self._pending.popleft()
 
+    def _next_step(self, input: str | list[Any]) -> ScriptStep:
+        del input
+        if self.index >= len(self.steps):
+            raise UnexpectedModelCall(
+                f"Scripted model for {self.agent_name} has no step left (used {self.index})."
+            )
+        step = self.steps[self.index]
+        self.index += 1
+        return step
+
     async def get_response(
         self,
         system_instructions: str | None,
@@ -106,15 +117,11 @@ class FixtureModel(Model):
         conversation_id: str | None,
         prompt: Any,
     ) -> ModelResponse:
-        del input, model_settings, tools, output_schema, handoffs, tracing
+        del tools, output_schema, handoffs, tracing
         del previous_response_id, conversation_id, prompt
+        admit_model_call()
         self.seen_instructions.append(system_instructions)
-        if self.index >= len(self.steps):
-            raise UnexpectedModelCall(
-                f"Scripted model for {self.agent_name} has no step left (used {self.index})."
-            )
-        step = self.steps[self.index]
-        self.index += 1
+        step = self._next_step(input)
         if step.tool:
             output = [
                 ResponseFunctionToolCall(
@@ -152,6 +159,7 @@ class FixtureModel(Model):
             attempts=1,
             latency_ms=0.0,
             system_instructions=system_instructions,
+            temperature=getattr(model_settings, "temperature", None),
         )
         self.history.append(record)
         self._pending.append(record)
@@ -179,3 +187,46 @@ class FixtureModel(Model):
         del previous_response_id, conversation_id, prompt
         raise RuntimeError("FixtureModel only supports get_response. Runner.run does not stream.")
         yield None
+
+
+def _input_text(input: str | list[Any]) -> str:
+    if isinstance(input, str):
+        return input
+    parts: list[str] = []
+    for item in input:
+        content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            parts.extend(str(block.get("text", "")) for block in content if isinstance(block, dict))
+    return "\n".join(parts)
+
+
+class KeyedFixtureModel(FixtureModel):
+    """Replies by content instead of by position: the first rule whose ``match`` occurs in the input.
+
+    Used for a scripted judge, where which claims get judged depends on the sampler.
+    Script format: ``{"served_model": str, "default": <reply>, "rules": [{"match": str, "reply": <reply>}]}``;
+    a reply that is not a string is sent as JSON.
+    """
+
+    def __init__(self, script: dict[str, Any], *, agent_name: str = "judge") -> None:
+        super().__init__([], served_model=str(script.get("served_model") or "mock-judge"), agent_name=agent_name)
+        self.rules = [(str(rule["match"]), _reply_text(rule["reply"])) for rule in script.get("rules", [])]
+        self.default = _reply_text(script["default"]) if "default" in script else None
+        self.inputs: list[str] = []
+
+    def _next_step(self, input: str | list[Any]) -> ScriptStep:
+        text = _input_text(input)
+        self.inputs.append(text)
+        self.index += 1
+        for match, reply in self.rules:
+            if match in text:
+                return ScriptStep(content=reply)
+        if self.default is None:
+            raise UnexpectedModelCall(f"Keyed script for {self.agent_name} has no rule for this input.")
+        return ScriptStep(content=self.default)
+
+
+def _reply_text(reply: Any) -> str:
+    return reply if isinstance(reply, str) else json.dumps(reply, sort_keys=True)

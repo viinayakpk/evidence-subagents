@@ -1,12 +1,13 @@
 # frozen stratified sample seed 20261024
 # pilot 10 restratified from the subset
 # gym ed735ba0af71d82688a55f952a6ea11479ae7206
+# 1 email-defect tasks swapped by evcarry-task-rules-v1; see docs/TASK_RULES.md
 canvas-module-completion-notion-gcal
 canvas-quiz-analysis-ppt
 fetch-sf-hr-training-notion-gcal-excel
 howtocook-weekly-gsheet-gcal
+sf-hr-compensation-pdf-notion
 sf-sales-region-analysis-gsheet-email
-sf-sla-breach-audit
 terminal-arxiv-latex-excel-word-notion
 wc-shipping-analysis
 yf-portfolio-risk-excel

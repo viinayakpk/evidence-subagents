@@ -34,6 +34,15 @@ class ModelConfig:
     routing: dict[str, Any] | None = None
     base_url_env: str | None = None
     model_env: str | None = None
+    # False: the provider may reject json_schema response_format, so structured
+    # sub-agent returns are requested in the prompt and parsed from text.
+    json_schema_outputs: bool = True
+    # Scripted judge fixture (kind: scripted); see providers.scripted.KeyedFixtureModel.
+    script: str | None = None
+    # Extra request body for this model's L3 judge calls only (its reasoning setting), never for agent calls.
+    judge_extra_body: dict[str, Any] | None = None
+    # Extra request body for this model's agent calls (main agent and sub-agents), never for judge calls (C6).
+    agent_extra_body: dict[str, Any] | None = None
 
     def price_table(self) -> PriceTable:
         if not self.prices:
@@ -66,6 +75,10 @@ def load_models(path: str | Path | None = None) -> dict[str, ModelConfig]:
             routing=body.get("routing"),
             base_url_env=body.get("base_url_env"),
             model_env=body.get("model_env"),
+            json_schema_outputs=bool(body.get("json_schema_outputs", True)),
+            script=body.get("script"),
+            judge_extra_body=body.get("judge_extra_body"),
+            agent_extra_body=body.get("agent_extra_body"),
         )
     return loaded
 
@@ -127,4 +140,6 @@ def build_model(
         kind=config.kind,
         routing=config.routing,
         extra_headers=headers,
+        price=config.price_table(),
+        agent_extra_body=config.agent_extra_body,
     )

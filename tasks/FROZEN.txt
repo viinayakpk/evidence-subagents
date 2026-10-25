@@ -5,3 +5,10 @@ pool=160
 subset=70
 pilot=10
 method=largest-remainder then Random(seed).shuffle within sorted stratum names
+rules=evcarry-task-rules-v1 (src/evcarry/env/task_rules.py, scripts/apply_task_rules.py, docs/TASK_RULES.md)
+swapped_subset70=7
+swapped_pilot10=1
+pre_swap_sha256_subset70=0571b5ee000b6d673b55e385cc1b275438346a53b4de910d9513b56fd0168918
+pre_swap_sha256_pilot10=24721d50536f06dca6ab541fab661c0f15eb081623961d64141129a096ff3d86
+split=evcarry-split-v1 (primary headline = subset70 minus pilot10, tasks/headline60.txt; pilot10 reported separately; fixes verified on tasks/dev.txt)
+dev_rule=evcarry-dev-v1: pool160 minus subset70, no email defect, at most 150 SA tools, a grader whose imports the grading Python has (A13, 2026-10-25), the first 2 by sha256("evcarry-dev-v1|" + task)

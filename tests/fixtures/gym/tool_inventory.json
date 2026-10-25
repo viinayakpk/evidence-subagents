@@ -1,0 +1,1820 @@
+{
+ "gym_commit": "ed735ba0af71d82688a55f952a6ea11479ae7206",
+ "image": "evcarry/toolathlon-gym:ed735ba",
+ "servers": {
+  "arxiv-latex": [
+   {
+    "name": "get_paper_prompt",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_paper_abstract",
+    "read_only_hint": null
+   },
+   {
+    "name": "list_paper_sections",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_paper_section",
+    "read_only_hint": null
+   }
+  ],
+  "arxiv_local": [
+   {
+    "name": "search_papers",
+    "read_only_hint": null
+   },
+   {
+    "name": "download_paper",
+    "read_only_hint": null
+   },
+   {
+    "name": "list_papers",
+    "read_only_hint": null
+   },
+   {
+    "name": "read_paper",
+    "read_only_hint": null
+   }
+  ],
+  "canvas": [
+   {
+    "name": "canvas_health_check",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_courses",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_course",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_create_course",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_update_course",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_assignments",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_assignment",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_create_assignment",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_update_assignment",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_assignment_groups",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_submission",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_submit_assignment",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_submit_grade",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_files",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_file",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_folders",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_pages",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_page",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_calendar_events",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_upcoming_assignments",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_dashboard",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_dashboard_cards",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_course_grades",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_user_grades",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_user_profile",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_update_user_profile",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_enroll_user",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_modules",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_module",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_module_items",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_module_item",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_mark_module_item_complete",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_discussion_topics",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_discussion_topic",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_post_to_discussion",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_announcements",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_create_announcement",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_quizzes",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_quiz",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_create_quiz",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_start_quiz_attempt",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_submit_quiz_answers",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_quiz_questions",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_quiz_question",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_create_quiz_question",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_update_quiz_question",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_delete_quiz_question",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_upload_file_from_path",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_submit_assignment_with_file",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_rubrics",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_rubric",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_conversations",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_conversation",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_create_conversation",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_notifications",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_syllabus",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_delete_course",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_delete_assignment",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_delete_announcement",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_delete_quiz",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_delete_conversation",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_unenroll_user",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_account",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_account_courses",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_account_users",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_create_user",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_list_sub_accounts",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_get_account_reports",
+    "read_only_hint": null
+   },
+   {
+    "name": "canvas_create_account_report",
+    "read_only_hint": null
+   }
+  ],
+  "emails": [
+   {
+    "name": "get_emails",
+    "read_only_hint": null
+   },
+   {
+    "name": "read_email",
+    "read_only_hint": null
+   },
+   {
+    "name": "search_emails",
+    "read_only_hint": null
+   },
+   {
+    "name": "send_email",
+    "read_only_hint": null
+   },
+   {
+    "name": "reply_email",
+    "read_only_hint": null
+   },
+   {
+    "name": "forward_email",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_email",
+    "read_only_hint": null
+   },
+   {
+    "name": "move_email",
+    "read_only_hint": null
+   },
+   {
+    "name": "mark_emails",
+    "read_only_hint": null
+   },
+   {
+    "name": "move_emails",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_emails",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_folders",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_folder",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_folder",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_mailbox_stats",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_unread_count",
+    "read_only_hint": null
+   },
+   {
+    "name": "check_connection",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_email_headers",
+    "read_only_hint": null
+   },
+   {
+    "name": "save_draft",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_drafts",
+    "read_only_hint": null
+   },
+   {
+    "name": "update_draft",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_draft",
+    "read_only_hint": null
+   },
+   {
+    "name": "export_emails",
+    "read_only_hint": null
+   },
+   {
+    "name": "import_emails",
+    "read_only_hint": null
+   },
+   {
+    "name": "download_attachment",
+    "read_only_hint": null
+   }
+  ],
+  "excel": [
+   {
+    "name": "apply_formula",
+    "read_only_hint": null
+   },
+   {
+    "name": "validate_formula_syntax",
+    "read_only_hint": true
+   },
+   {
+    "name": "format_range",
+    "read_only_hint": null
+   },
+   {
+    "name": "read_data_from_excel",
+    "read_only_hint": true
+   },
+   {
+    "name": "write_data_to_excel",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_workbook",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_worksheet",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_chart",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_pivot_table",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_table",
+    "read_only_hint": null
+   },
+   {
+    "name": "copy_worksheet",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_worksheet",
+    "read_only_hint": null
+   },
+   {
+    "name": "rename_worksheet",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_workbook_metadata",
+    "read_only_hint": true
+   },
+   {
+    "name": "merge_cells",
+    "read_only_hint": null
+   },
+   {
+    "name": "unmerge_cells",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_merged_cells",
+    "read_only_hint": true
+   },
+   {
+    "name": "copy_range",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_range",
+    "read_only_hint": null
+   },
+   {
+    "name": "validate_excel_range",
+    "read_only_hint": true
+   },
+   {
+    "name": "get_data_validation_info",
+    "read_only_hint": true
+   },
+   {
+    "name": "insert_rows",
+    "read_only_hint": null
+   },
+   {
+    "name": "insert_columns",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_sheet_rows",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_sheet_columns",
+    "read_only_hint": null
+   }
+  ],
+  "fetch": [
+   {
+    "name": "fetch_html",
+    "read_only_hint": null
+   },
+   {
+    "name": "fetch_markdown",
+    "read_only_hint": null
+   },
+   {
+    "name": "fetch_txt",
+    "read_only_hint": null
+   },
+   {
+    "name": "fetch_json",
+    "read_only_hint": null
+   }
+  ],
+  "filesystem": [
+   {
+    "name": "read_file",
+    "read_only_hint": true
+   },
+   {
+    "name": "read_text_file",
+    "read_only_hint": true
+   },
+   {
+    "name": "read_media_file",
+    "read_only_hint": true
+   },
+   {
+    "name": "read_multiple_files",
+    "read_only_hint": true
+   },
+   {
+    "name": "write_file",
+    "read_only_hint": false
+   },
+   {
+    "name": "edit_file",
+    "read_only_hint": false
+   },
+   {
+    "name": "create_directory",
+    "read_only_hint": false
+   },
+   {
+    "name": "list_directory",
+    "read_only_hint": true
+   },
+   {
+    "name": "list_directory_with_sizes",
+    "read_only_hint": true
+   },
+   {
+    "name": "directory_tree",
+    "read_only_hint": true
+   },
+   {
+    "name": "move_file",
+    "read_only_hint": false
+   },
+   {
+    "name": "search_files",
+    "read_only_hint": true
+   },
+   {
+    "name": "get_file_info",
+    "read_only_hint": true
+   },
+   {
+    "name": "list_allowed_directories",
+    "read_only_hint": true
+   }
+  ],
+  "google_calendar": [
+   {
+    "name": "create_event",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_event",
+    "read_only_hint": null
+   },
+   {
+    "name": "update_event",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_event",
+    "read_only_hint": null
+   },
+   {
+    "name": "list_events",
+    "read_only_hint": null
+   }
+  ],
+  "google_forms": [
+   {
+    "name": "create_form",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_text_question",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_multiple_choice_question",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_form",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_form_responses",
+    "read_only_hint": null
+   }
+  ],
+  "google_sheet": [
+   {
+    "name": "get_sheet_data",
+    "read_only_hint": true
+   },
+   {
+    "name": "get_sheet_formulas",
+    "read_only_hint": true
+   },
+   {
+    "name": "update_cells",
+    "read_only_hint": null
+   },
+   {
+    "name": "batch_update_cells",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_rows",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_columns",
+    "read_only_hint": null
+   },
+   {
+    "name": "list_sheets",
+    "read_only_hint": true
+   },
+   {
+    "name": "copy_sheet",
+    "read_only_hint": null
+   },
+   {
+    "name": "rename_sheet",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_multiple_sheet_data",
+    "read_only_hint": true
+   },
+   {
+    "name": "get_multiple_spreadsheet_summary",
+    "read_only_hint": true
+   },
+   {
+    "name": "create_spreadsheet",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_sheet",
+    "read_only_hint": null
+   },
+   {
+    "name": "list_spreadsheets",
+    "read_only_hint": true
+   },
+   {
+    "name": "share_spreadsheet",
+    "read_only_hint": null
+   },
+   {
+    "name": "list_folders",
+    "read_only_hint": true
+   },
+   {
+    "name": "search_spreadsheets",
+    "read_only_hint": true
+   },
+   {
+    "name": "find_in_spreadsheet",
+    "read_only_hint": true
+   },
+   {
+    "name": "batch_update",
+    "read_only_hint": null
+   }
+  ],
+  "howtocook": [
+   {
+    "name": "mcp_howtocook_getAllRecipes",
+    "read_only_hint": null
+   },
+   {
+    "name": "mcp_howtocook_getRecipesByCategory",
+    "read_only_hint": null
+   },
+   {
+    "name": "mcp_howtocook_recommendMeals",
+    "read_only_hint": null
+   },
+   {
+    "name": "mcp_howtocook_whatToEat",
+    "read_only_hint": null
+   },
+   {
+    "name": "mcp_howtocook_getRecipeById",
+    "read_only_hint": null
+   }
+  ],
+  "memory": [
+   {
+    "name": "create_entities",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_relations",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_observations",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_entities",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_observations",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_relations",
+    "read_only_hint": null
+   },
+   {
+    "name": "read_graph",
+    "read_only_hint": null
+   },
+   {
+    "name": "search_nodes",
+    "read_only_hint": null
+   },
+   {
+    "name": "open_nodes",
+    "read_only_hint": null
+   }
+  ],
+  "notion": [
+   {
+    "name": "API-get-user",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-get-users",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-get-self",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-post-database-query",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-post-search",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-get-block-children",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-patch-block-children",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-retrieve-a-block",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-update-a-block",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-delete-a-block",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-retrieve-a-page",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-patch-page",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-post-page",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-create-a-database",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-update-a-database",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-retrieve-a-database",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-retrieve-a-page-property",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-retrieve-a-comment",
+    "read_only_hint": null
+   },
+   {
+    "name": "API-create-a-comment",
+    "read_only_hint": null
+   }
+  ],
+  "pdf-tools": [
+   {
+    "name": "read_pdf_pages",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_pdf_info",
+    "read_only_hint": null
+   },
+   {
+    "name": "merge_pdfs",
+    "read_only_hint": null
+   },
+   {
+    "name": "extract_pdf_pages",
+    "read_only_hint": null
+   },
+   {
+    "name": "search_pdf_content",
+    "read_only_hint": null
+   },
+   {
+    "name": "search_pdf_next_page",
+    "read_only_hint": null
+   },
+   {
+    "name": "search_pdf_prev_page",
+    "read_only_hint": null
+   },
+   {
+    "name": "search_pdf_go_page",
+    "read_only_hint": null
+   },
+   {
+    "name": "search_pdf_info",
+    "read_only_hint": null
+   }
+  ],
+  "playwright_with_chunk": [
+   {
+    "name": "browser_close",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_resize",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_console_messages",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_handle_dialog",
+    "read_only_hint": false
+   },
+   {
+    "name": "browser_evaluate",
+    "read_only_hint": false
+   },
+   {
+    "name": "browser_file_upload",
+    "read_only_hint": false
+   },
+   {
+    "name": "browser_install",
+    "read_only_hint": false
+   },
+   {
+    "name": "browser_press_key",
+    "read_only_hint": false
+   },
+   {
+    "name": "browser_type",
+    "read_only_hint": false
+   },
+   {
+    "name": "browser_navigate",
+    "read_only_hint": false
+   },
+   {
+    "name": "browser_navigate_back",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_navigate_forward",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_network_requests",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_take_screenshot",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_snapshot",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_click",
+    "read_only_hint": false
+   },
+   {
+    "name": "browser_drag",
+    "read_only_hint": false
+   },
+   {
+    "name": "browser_hover",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_select_option",
+    "read_only_hint": false
+   },
+   {
+    "name": "browser_snapshot_navigate_to_span",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_snapshot_navigate_to_first_span",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_snapshot_navigate_to_last_span",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_snapshot_navigate_to_next_span",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_snapshot_navigate_to_prev_span",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_snapshot_navigate_to_line",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_snapshot_search",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_tab_list",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_tab_new",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_tab_select",
+    "read_only_hint": true
+   },
+   {
+    "name": "browser_tab_close",
+    "read_only_hint": false
+   },
+   {
+    "name": "browser_wait_for",
+    "read_only_hint": true
+   }
+  ],
+  "pptx": [
+   {
+    "name": "create_presentation",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_presentation_from_template",
+    "read_only_hint": null
+   },
+   {
+    "name": "open_presentation",
+    "read_only_hint": true
+   },
+   {
+    "name": "save_presentation",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_presentation_info",
+    "read_only_hint": true
+   },
+   {
+    "name": "get_template_file_info",
+    "read_only_hint": true
+   },
+   {
+    "name": "set_core_properties",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_slide",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_slide_info",
+    "read_only_hint": true
+   },
+   {
+    "name": "extract_slide_text",
+    "read_only_hint": true
+   },
+   {
+    "name": "extract_presentation_text",
+    "read_only_hint": true
+   },
+   {
+    "name": "populate_placeholder",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_bullet_points",
+    "read_only_hint": null
+   },
+   {
+    "name": "manage_text",
+    "read_only_hint": null
+   },
+   {
+    "name": "manage_image",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_table",
+    "read_only_hint": null
+   },
+   {
+    "name": "format_table_cell",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_shape",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_chart",
+    "read_only_hint": null
+   },
+   {
+    "name": "apply_professional_design",
+    "read_only_hint": null
+   },
+   {
+    "name": "apply_picture_effects",
+    "read_only_hint": null
+   },
+   {
+    "name": "manage_fonts",
+    "read_only_hint": null
+   },
+   {
+    "name": "list_slide_templates",
+    "read_only_hint": true
+   },
+   {
+    "name": "apply_slide_template",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_slide_from_template",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_presentation_from_templates",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_template_info",
+    "read_only_hint": true
+   },
+   {
+    "name": "auto_generate_presentation",
+    "read_only_hint": null
+   },
+   {
+    "name": "optimize_slide_text",
+    "read_only_hint": null
+   },
+   {
+    "name": "manage_hyperlinks",
+    "read_only_hint": null
+   },
+   {
+    "name": "update_chart_data",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_connector",
+    "read_only_hint": null
+   },
+   {
+    "name": "manage_slide_masters",
+    "read_only_hint": null
+   },
+   {
+    "name": "manage_slide_transitions",
+    "read_only_hint": null
+   },
+   {
+    "name": "list_presentations",
+    "read_only_hint": null
+   },
+   {
+    "name": "switch_presentation",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_server_info",
+    "read_only_hint": null
+   }
+  ],
+  "rail_12306": [
+   {
+    "name": "get-current-date",
+    "read_only_hint": null
+   },
+   {
+    "name": "get-stations-code-in-city",
+    "read_only_hint": null
+   },
+   {
+    "name": "get-station-code-of-citys",
+    "read_only_hint": null
+   },
+   {
+    "name": "get-station-code-by-names",
+    "read_only_hint": null
+   },
+   {
+    "name": "get-station-by-telecode",
+    "read_only_hint": null
+   },
+   {
+    "name": "get-tickets",
+    "read_only_hint": null
+   },
+   {
+    "name": "get-interline-tickets",
+    "read_only_hint": null
+   },
+   {
+    "name": "get-train-route-stations",
+    "read_only_hint": null
+   }
+  ],
+  "scholarly": [
+   {
+    "name": "search-arxiv",
+    "read_only_hint": null
+   },
+   {
+    "name": "search-google-scholar",
+    "read_only_hint": null
+   }
+  ],
+  "snowflake": [
+   {
+    "name": "list_databases",
+    "read_only_hint": null
+   },
+   {
+    "name": "list_schemas",
+    "read_only_hint": null
+   },
+   {
+    "name": "list_tables",
+    "read_only_hint": null
+   },
+   {
+    "name": "describe_table",
+    "read_only_hint": null
+   },
+   {
+    "name": "read_query",
+    "read_only_hint": null
+   },
+   {
+    "name": "append_insight",
+    "read_only_hint": null
+   },
+   {
+    "name": "write_query",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_table",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_databases",
+    "read_only_hint": null
+   },
+   {
+    "name": "drop_databases",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_schemas",
+    "read_only_hint": null
+   },
+   {
+    "name": "drop_schemas",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_tables",
+    "read_only_hint": null
+   },
+   {
+    "name": "drop_tables",
+    "read_only_hint": null
+   }
+  ],
+  "terminal": [
+   {
+    "name": "run_command",
+    "read_only_hint": null
+   },
+   {
+    "name": "show_security_rules",
+    "read_only_hint": null
+   }
+  ],
+  "woocommerce": [
+   {
+    "name": "woo_products_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_products_get",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_products_create",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_products_update",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_products_delete",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_products_batch_update",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_products_variations_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_products_categories_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_products_categories_create",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_products_tags_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_products_reviews_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_orders_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_orders_get",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_orders_create",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_orders_update",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_orders_delete",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_orders_batch_update",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_orders_notes_create",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_orders_refunds_create",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_customers_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_customers_get",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_customers_create",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_customers_update",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_coupons_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_coupons_get",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_coupons_create",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_coupons_update",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_coupons_delete",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_reports_sales",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_reports_top_sellers",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_reports_customers",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_reports_orders",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_reports_products",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_reports_stock",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_reports_low_stock",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_shipping_zones_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_shipping_zones_get",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_shipping_zones_create",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_shipping_zones_update",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_shipping_zone_methods_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_shipping_zone_methods_create",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_tax_rates_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_tax_rates_get",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_tax_rates_create",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_tax_classes_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_system_status",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_system_tools_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_system_tools_run",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_settings_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_settings_get",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_payment_gateways_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_payment_gateways_get",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_payment_gateways_update",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_webhooks_list",
+    "read_only_hint": null
+   },
+   {
+    "name": "woo_webhooks_create",
+    "read_only_hint": null
+   }
+  ],
+  "word": [
+   {
+    "name": "create_document",
+    "read_only_hint": null
+   },
+   {
+    "name": "copy_document",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_document_info",
+    "read_only_hint": true
+   },
+   {
+    "name": "get_document_text",
+    "read_only_hint": true
+   },
+   {
+    "name": "get_document_outline",
+    "read_only_hint": true
+   },
+   {
+    "name": "list_available_documents",
+    "read_only_hint": true
+   },
+   {
+    "name": "get_document_xml",
+    "read_only_hint": true
+   },
+   {
+    "name": "insert_header_near_text",
+    "read_only_hint": null
+   },
+   {
+    "name": "insert_line_or_paragraph_near_text",
+    "read_only_hint": null
+   },
+   {
+    "name": "insert_numbered_list_near_text",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_paragraph",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_heading",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_picture",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_table",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_page_break",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_paragraph",
+    "read_only_hint": null
+   },
+   {
+    "name": "search_and_replace",
+    "read_only_hint": null
+   },
+   {
+    "name": "create_custom_style",
+    "read_only_hint": null
+   },
+   {
+    "name": "format_text",
+    "read_only_hint": null
+   },
+   {
+    "name": "format_table",
+    "read_only_hint": null
+   },
+   {
+    "name": "set_table_cell_shading",
+    "read_only_hint": null
+   },
+   {
+    "name": "apply_table_alternating_rows",
+    "read_only_hint": null
+   },
+   {
+    "name": "highlight_table_header",
+    "read_only_hint": null
+   },
+   {
+    "name": "merge_table_cells",
+    "read_only_hint": null
+   },
+   {
+    "name": "merge_table_cells_horizontal",
+    "read_only_hint": null
+   },
+   {
+    "name": "merge_table_cells_vertical",
+    "read_only_hint": null
+   },
+   {
+    "name": "set_table_cell_alignment",
+    "read_only_hint": null
+   },
+   {
+    "name": "set_table_alignment_all",
+    "read_only_hint": null
+   },
+   {
+    "name": "protect_document",
+    "read_only_hint": null
+   },
+   {
+    "name": "unprotect_document",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_footnote_to_document",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_footnote_after_text",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_footnote_before_text",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_footnote_enhanced",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_endnote_to_document",
+    "read_only_hint": null
+   },
+   {
+    "name": "customize_footnote_style",
+    "read_only_hint": null
+   },
+   {
+    "name": "delete_footnote_from_document",
+    "read_only_hint": null
+   },
+   {
+    "name": "add_footnote_robust",
+    "read_only_hint": null
+   },
+   {
+    "name": "validate_document_footnotes",
+    "read_only_hint": true
+   },
+   {
+    "name": "delete_footnote_robust",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_paragraph_text_from_document",
+    "read_only_hint": true
+   },
+   {
+    "name": "find_text_in_document",
+    "read_only_hint": true
+   },
+   {
+    "name": "convert_to_pdf",
+    "read_only_hint": null
+   },
+   {
+    "name": "replace_paragraph_block_below_header",
+    "read_only_hint": null
+   },
+   {
+    "name": "replace_block_between_manual_anchors",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_all_comments",
+    "read_only_hint": true
+   },
+   {
+    "name": "get_comments_by_author",
+    "read_only_hint": true
+   },
+   {
+    "name": "get_comments_for_paragraph",
+    "read_only_hint": true
+   },
+   {
+    "name": "set_table_column_width",
+    "read_only_hint": null
+   },
+   {
+    "name": "set_table_column_widths",
+    "read_only_hint": null
+   },
+   {
+    "name": "set_table_width",
+    "read_only_hint": null
+   },
+   {
+    "name": "auto_fit_table_columns",
+    "read_only_hint": null
+   },
+   {
+    "name": "format_table_cell_text",
+    "read_only_hint": null
+   },
+   {
+    "name": "set_table_cell_padding",
+    "read_only_hint": null
+   }
+  ],
+  "yahoo-finance": [
+   {
+    "name": "get_historical_stock_prices",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_stock_price_by_date",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_stock_info",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_yahoo_finance_news",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_stock_actions",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_financial_statement",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_holder_info",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_option_expiration_dates",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_option_chain",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_recommendations",
+    "read_only_hint": null
+   }
+  ],
+  "youtube": [
+   {
+    "name": "videos_getVideo",
+    "read_only_hint": null
+   },
+   {
+    "name": "videos_searchVideos",
+    "read_only_hint": null
+   },
+   {
+    "name": "transcripts_getTranscript",
+    "read_only_hint": null
+   },
+   {
+    "name": "channels_getChannel",
+    "read_only_hint": null
+   },
+   {
+    "name": "channels_listVideos",
+    "read_only_hint": null
+   },
+   {
+    "name": "channels_navigateList",
+    "read_only_hint": null
+   },
+   {
+    "name": "playlists_getPlaylist",
+    "read_only_hint": null
+   },
+   {
+    "name": "playlists_getPlaylistItems",
+    "read_only_hint": null
+   },
+   {
+    "name": "playlists_searchPlaylists",
+    "read_only_hint": null
+   }
+  ],
+  "youtube-transcript": [
+   {
+    "name": "get_transcript",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_timed_transcript",
+    "read_only_hint": null
+   },
+   {
+    "name": "get_video_info",
+    "read_only_hint": null
+   }
+  ]
+ }
+}

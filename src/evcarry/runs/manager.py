@@ -1,8 +1,18 @@
 """Expand an experiment grid, resume finished runs, and write JSONL traces.
 
-Parallel billable runs check the spend cap before they start and add cost
-after they finish, so they can overshoot the cap by about one batch.
-Off-peak is checked at the start of each run, not mid-run.
+Billable runs check the spend cap before they start. With a per-run cost
+ceiling (``budget.run_ceiling_usd``) the check reserves the ceiling for every
+run in flight, so parallel runs cannot overshoot the cap by a batch; each
+run's meter refuses its model calls at the ceiling, and every run's calls at
+the cap (``evcarry.runs.budget``). Off-peak is checked at the start of each
+run, not mid-run. The cap counts everything already logged in the output
+directory, including earlier invocations and aborted runs (kept as
+``*.jsonl.aborted-<n>``), and every run in flight as it spends.
+
+``environment: in_process`` runs the fixture tasks against the in-process
+fake MCP server. ``environment: docker`` runs real Toolathlon-Gym tasks, one
+isolated set of containers per run (``evcarry.env.gym_docker``), graded by the
+task's own evaluation script.
 """
 
 from __future__ import annotations
@@ -10,27 +20,47 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from agents import RunConfig, Runner, set_trace_processors
+from agents import Runner, set_trace_processors
+from agents.exceptions import MaxTurnsExceeded
 
 from evcarry.env.fake_mcp import FakeMcp
-from evcarry.env.isolation import DockerIsolation
-from evcarry.env.toolathlon import load_task, load_task_list, prepare_workspace
+from evcarry.env.isolation import DockerIsolation, EnvironmentUnavailable
+from evcarry.env.toolathlon import TaskSpec, load_task, load_task_list, prepare_workspace
 from evcarry.eval.evaluate import evaluate_task
 from evcarry.harness.agents import build_main_agent
 from evcarry.harness.arms import arm_spec, effective_audit
+from evcarry.harness.context import ContextTrimmer, current_trimmer
 from evcarry.harness.hooks import LedgerHooks
 from evcarry.harness.prompts import prompt_path
+from evcarry.harness.run_settings import TEMPERATURE, AgentSampling, current_sampling, harness_run_config
+from evcarry.harness.tools import OVERLONG_META, VIEW_OVERLONG, ToolRouter, Toolset, fixture_toolset, overlong_view
 from evcarry.inject.injector import FaultInjector
 from evcarry.ledger.ledger import Ledger
+from evcarry.ledger.store import write_ledger
 from evcarry.paths import repo_root, resolve_repo_path
+from evcarry.protocol.judge import build_judge
+from evcarry.providers.pin import PinGuard, ProviderMismatch, current_pin_guard
 from evcarry.providers.registry import load_models, resolve_api_key
-from evcarry.runs.budget import BudgetGuard
+from evcarry.runs.budget import (
+    _SPEND_EVENTS,
+    BudgetError,
+    BudgetGuard,
+    CostCeilingExceeded,
+    RunMeter,
+    SpendCapExceeded,
+    current_run_meter,
+    event_reference_spend,
+    event_spend,
+)
 from evcarry.runs.config import ExperimentConfig
+from evcarry.runs.infra import INFRA_STATUS, INFRA_STOP_AFTER, InfrastructureError, infra_outcome, is_infrastructure_error
 from evcarry.trace.index import write_index
 from evcarry.trace.processor import JsonlTraceProcessor
 from evcarry.trace.writer import JsonlWriter, current_writer, has_run_end, read_events, run_path
@@ -62,12 +92,214 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+SHA256SUMS = "tasks/SHA256SUMS"
+GYM_SUBMODULE = "third_party/toolathlon_gym"
+
+
+class FrozenInputMismatch(RuntimeError):
+    """A frozen task list or the gym checkout differs from what was frozen."""
+
+
+def check_frozen_inputs(config: ExperimentConfig) -> None:
+    """Refuse to run on a frozen task list whose bytes changed, or on a gym checkout other than the frozen commit.
+
+    Task lists not named in ``tasks/SHA256SUMS`` (the test fixtures) are not checked.
+    Docker runs send the host's ``docs/task.md`` while the images hold the frozen
+    commit's task files, so the submodule must be at ``tasks/FROZEN.txt``'s commit.
+    """
+    tasks = resolve_repo_path(config.tasks)
+    sums = resolve_repo_path(SHA256SUMS)
+    if sums.is_file():
+        for line in sums.read_text(encoding="utf-8").splitlines():
+            digest, _, name = line.strip().partition("  ")
+            if name and resolve_repo_path(name.strip()) == tasks and _sha256_file(tasks) != digest:
+                raise FrozenInputMismatch(f"{config.tasks} does not match its hash in {SHA256SUMS}; the frozen list was edited.")
+    if config.environment == "docker":
+        from evcarry.env.gym_docker import gym_commit
+
+        checkout = resolve_repo_path(GYM_SUBMODULE)
+        if (checkout / ".git").exists():
+            head = subprocess.run(
+                ["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+            ).stdout.strip()
+            if head and head != gym_commit():
+                raise FrozenInputMismatch(f"{GYM_SUBMODULE} is at {head}, not the frozen gym commit {gym_commit()}.")
+
+
+def check_prompt_freeze(config: ExperimentConfig, *, billable: bool) -> dict[str, object]:
+    """Refuse a run whose prompt set changed after it was frozen (billable runs), or is not frozen when required."""
+    from evcarry.harness import prompt_freeze
+
+    found = prompt_freeze.status(config.prompts)
+    if found.state == "changed" and (billable or config.require_frozen_prompts):
+        raise FrozenInputMismatch(
+            f"{config.prompts} changed after it was frozen ({prompt_freeze.FREEZE_FILE}): {', '.join(found.changed) or 'manifest'}"
+        )
+    if found.state != "match" and config.require_frozen_prompts:
+        raise FrozenInputMismatch(f"{config.experiment} requires a frozen prompt set; {config.prompts} is {found.state}.")
+    return found.as_dict()
+
+
 def load_script_file(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def default_script_path(arm_name: str) -> Path:
-    return resolve_repo_path("tests/fixtures/scripts") / arm_spec(arm_name).script
+def trace_spend(path: Path) -> float:
+    total = 0.0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # a line cut short when the process was killed
+        if isinstance(event, dict):
+            total += event_spend(event)
+    return total
+
+
+def logged_spend(out_dir: Path) -> float:
+    """Dollars already logged in ``out_dir`` (``event_spend`` over every trace, finished or aborted).
+
+    The spend cap starts from this, so a restart (the plan runs one seed per
+    weekend) does not reset what was already spent.
+    """
+    return sum(trace_spend(path) for path in [*out_dir.glob("*.jsonl"), *out_dir.glob("*.jsonl.aborted-*")])
+
+
+def _set_aside(path: Path) -> Path:
+    """Keep an unfinished trace as ``<name>.aborted-<n>``: its calls were paid for and count toward the cap."""
+    n = 1
+    while (target := path.with_name(f"{path.name}.aborted-{n}")).exists():
+        n += 1
+    path.rename(target)
+    return target
+
+
+def _events(path: Path) -> list[dict[str, Any]]:
+    """Trace events, skipping a last line cut short when the process was killed."""
+    events = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def previous_attempts(path: Path) -> list[dict[str, Any]]:
+    """Set-aside traces of one run (``<name>.aborted-<n>``), oldest first, with how each ended (C2, A19)."""
+    found = []
+    for candidate in path.parent.glob(f"{path.name}.aborted-*"):
+        suffix = candidate.name.rsplit("-", 1)[-1]
+        if not suffix.isdigit():
+            continue
+        events = _events(candidate)
+        end = next((event for event in reversed(events) if event.get("type") == "run_end"), None)
+        if end is not None:
+            ended = str(end.get("status") or "run_end")
+        else:
+            error = next((event for event in reversed(events) if event.get("type") == "run_error"), None)
+            ended = f"run_error:{error.get('error_type')}" if error else "unfinished"
+        found.append({"n": int(suffix), "ended": ended})
+    return sorted(found, key=lambda item: item["n"])
+
+
+def _last_run_end(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return next((event for event in reversed(_events(path)) if event.get("type") == "run_end"), None)
+
+
+BLOCK_LOG = "blocks.ndjson"
+
+
+def plan_blocks(config: ExperimentConfig, destination: Path, model_name: str) -> dict[str, list[tuple[str, int]]]:
+    """Apply the block rule (A19) before a pass over the grid: re-run or drop each hit block.
+
+    A (task, seed) block is hit when any arm's trace ended ``infra_error`` or has no ``run_end``.
+    Below ``max_block_attempts`` every arm's trace of the block is set aside, so the whole block runs
+    again. At the limit the block is dropped: a trace without ``run_end`` gets an ``infra_error``
+    ``run_end`` (``block_dropped: true``), so nothing of the block runs again. Every decision is a
+    line in ``blocks.ndjson`` (not ``*.jsonl``: those are run traces). A dropped block stays dropped.
+    """
+    tasks = load_task_list(resolve_repo_path(config.tasks))
+    decided: dict[str, list[tuple[str, int]]] = {"rerun": [], "dropped": []}
+    log_path = destination / BLOCK_LOG
+    dropped_before = set()
+    if log_path.exists():
+        for row in _events(log_path):
+            if row.get("action") == "dropped":
+                dropped_before.add((row.get("task"), row.get("seed")))
+    for task_name in tasks:
+        for seed in config.seeds:
+            if (task_name, seed) in dropped_before:
+                continue
+            paths = {arm: run_path(destination, task_name, arm, model_name, seed) for arm in config.arms}
+            hit = {}
+            for arm, path in paths.items():
+                if not path.exists():
+                    continue
+                end = _last_run_end(path)
+                if end is None:
+                    hit[arm] = "unfinished"
+                elif end.get("status") == INFRA_STATUS and not end.get("block_dropped"):
+                    hit[arm] = INFRA_STATUS
+            if not hit:
+                continue
+            attempts = max(
+                len(previous_attempts(path)) + (1 if path.exists() else 0) for path in paths.values()
+            )
+            action = "rerun" if attempts < config.max_block_attempts else "dropped"
+            with log_path.open("a", encoding="utf-8") as log:
+                log.write(
+                    json.dumps(
+                        {
+                            "type": "block",
+                            "task": task_name,
+                            "seed": seed,
+                            "action": action,
+                            "attempts_so_far": attempts,
+                            "hit": hit,
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    + "\n"
+                )
+            decided[action].append((task_name, seed))
+            for arm, path in paths.items():
+                if action == "rerun":
+                    if path.exists():
+                        _set_aside(path)
+                elif path.exists() and _last_run_end(path) is None:
+                    writer = JsonlWriter(path)
+                    try:
+                        writer.write(
+                            {
+                                "type": "run_end",
+                                "experiment": config.experiment,
+                                "task": task_name,
+                                "arm": arm,
+                                "model": model_name,
+                                "seed": seed,
+                                "agent_status": "not_finished",
+                                "status": INFRA_STATUS,
+                                "passed": None,
+                                "eval_passed": None,
+                                "block_dropped": True,
+                                "attempt": len(previous_attempts(path)) + 1,
+                                "error": "trace ended without run_end; block dropped after max_block_attempts",
+                                "spend_usd": trace_spend(path),
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                            }
+                        )
+                    finally:
+                        writer.close()
+    return decided
+
+
+def default_script_path(arm_name: str, script_dir: str = "tests/fixtures/scripts") -> Path:
+    return resolve_repo_path(script_dir) / arm_spec(arm_name).script
 
 
 def grid(config: ExperimentConfig) -> list[tuple[str, str, int]]:
@@ -80,16 +312,22 @@ def dry_run_report(config: ExperimentConfig) -> str:
     lines = [
         f"experiment: {config.experiment}",
         f"model: {config.model}",
+        f"judge_model: {config.judge_model}",
         f"environment: {config.environment}",
         f"schedule: {config.budget.schedule}",
         f"cap_usd: {config.budget.cap_usd}",
+        f"run_ceiling_usd: {config.budget.run_ceiling_usd} ({config.budget.ceiling_basis})",
+        f"max_steps (main agent): {config.limits.max_steps}",
+        f"subagent_max_turns: {subagent_turns(config)}",
+        f"context (tokens, enforced): {config.limits.context}",
         f"parallel_tasks: {config.parallel_tasks}",
+        f"prompts: {config.prompts} {_prompt_state(config)}",
         "grid:",
     ]
     for task, arm, seed in grid(config):
         lines.append(f"  {task} {arm} seed={seed}")
     if config.environment == "docker":
-        lines.append("docker: " + " ".join(DockerIsolation().plan()))
+        lines.extend("docker " + step for step in DockerIsolation(_gym_images(config)).plan())
         lines.append("docker up: not called (dry-run)")
     if model is not None:
         lines.append(f"billable: {model.billable}")
@@ -98,6 +336,181 @@ def dry_run_report(config: ExperimentConfig) -> str:
             lines.append("routing: " + json.dumps(model.routing, sort_keys=True))
     lines.append("api keys: not required for dry-run")
     return "\n".join(lines)
+
+
+def _prompt_state(config: ExperimentConfig) -> str:
+    from evcarry.harness import prompt_freeze
+
+    found = prompt_freeze.status(config.prompts)
+    required = ", frozen set required" if config.require_frozen_prompts else ""
+    return f"({found.state}, manifest {found.manifest_sha256[:12]}{required})"
+
+
+def _gym_images(config: ExperimentConfig):
+    from evcarry.env.gym_docker import GymImages
+
+    default = GymImages.default()
+    return GymImages(
+        agent=config.gym.agent_image or default.agent,
+        postgres=config.gym.postgres_image or default.postgres,
+    )
+
+
+def subagent_turns(config: ExperimentConfig) -> int:
+    return config.limits.subagent_max_turns or config.limits.max_steps
+
+
+async def _drive(agent: Any, text: str, hooks: LedgerHooks, config: ExperimentConfig) -> dict[str, Any]:
+    """Run the main agent. Turn, time and per-run cost limits end the run; other errors propagate."""
+    try:
+        result = await asyncio.wait_for(
+            Runner.run(
+                agent,
+                text,
+                hooks=hooks,
+                max_turns=config.limits.max_steps,
+                run_config=harness_run_config(),
+            ),
+            timeout=config.limits.max_seconds,
+        )
+    except MaxTurnsExceeded:
+        return {"agent_status": "max_turns_reached"}
+    except TimeoutError:
+        return {"agent_status": "timeout"}
+    except CostCeilingExceeded:
+        return {"agent_status": "cost_ceiling"}
+    return {"agent_status": "completed", "final_output": str(result.final_output)[-2000:]}
+
+
+# A run stopped at its cost ceiling is not graded (passed: null here, so eval_passed is null);
+# final_verdict then counts it as failed (owner decision 5).
+_NOT_GRADED_AT_CEILING = {"status": "cost_ceiling", "passed": None, "eval_ran": False}
+
+
+async def _run_fixture(
+    *,
+    task: TaskSpec,
+    out_dir: Path,
+    stem: str,
+    build: Any,
+    writer: JsonlWriter,
+    price: Any,
+    config: ExperimentConfig,
+) -> dict[str, Any]:
+    workspace = prepare_workspace(task, out_dir / "workspaces" / stem)
+    async with FakeMcp(workspace) as mcp:
+        ledger = Ledger()
+        toolset = fixture_toolset(mcp, ledger)
+        hooks = LedgerHooks(ledger, writer, price, toolset.catalog)
+        agent = build(toolset=toolset, hooks=hooks, ledger=ledger)
+        outcome = await _drive(agent, task.task_text, hooks, config)
+    if outcome["agent_status"] == "cost_ceiling":
+        return {**outcome, **_NOT_GRADED_AT_CEILING}
+    evaluation = evaluate_task(task, workspace)
+    return {**outcome, "passed": evaluation.get("passed"), "status": evaluation.get("status")}
+
+
+async def _run_gym(
+    *,
+    task: TaskSpec,
+    out_dir: Path,
+    stem: str,
+    build: Any,
+    writer: JsonlWriter,
+    price: Any,
+    config: ExperimentConfig,
+) -> dict[str, Any]:
+    from evcarry.env.contamination import db_writes, contamination, removed_fingerprints, tier
+    from evcarry.env.gym_docker import CLAIM_DONE, PYTHON_EXECUTE, GymTaskEnv
+    from evcarry.env.gym_tools import GymToolPolicy
+
+    gym = config.gym
+    policy = GymToolPolicy.load(gym.tool_policy)
+    for stale in (out_dir / "workspaces" / stem, out_dir / "logs" / stem):
+        shutil.rmtree(stale, ignore_errors=True)  # left by an unfinished earlier attempt
+    env = GymTaskEnv(
+        task,
+        images=_gym_images(config),
+        policy=policy,
+        log_dir=out_dir / "logs" / stem,
+        setup_timeout=gym.setup_timeout_s,
+        eval_timeout=gym.eval_timeout_s,
+        network_internal=gym.network_internal,
+        hide_task_dir=gym.hide_task_dir,
+        agent_db_readonly=gym.agent_db_readonly,
+    )
+    ledger = Ledger()
+    try:
+        await env.__aenter__()
+    except (EnvironmentUnavailable, RuntimeError) as exc:
+        # This task's environment could not start (a server, preprocess, or docker step failed).
+        # The run ends here and is not graded; other runs continue.
+        writer.write({"type": "environment", "kind": "docker", **env.info.as_dict(), "error": str(exc)[:2000]})
+        return {
+            "agent_status": "not_started",
+            "status": "env_error",
+            "passed": None,
+            "eval_ran": False,
+            "error": str(exc)[:1000],
+            "gym_run_id": env.info.run_id,
+            "timings": {key: round(value, 3) for key, value in env.info.timings.items()},
+        }
+    try:
+        mcp_tools = sorted(name for name in env.catalog if name not in (CLAIM_DONE, PYTHON_EXECUTE))
+        catalog = {**env.catalog, VIEW_OVERLONG: OVERLONG_META}
+        router = ToolRouter(env, {VIEW_OVERLONG: overlong_view(ledger, gym.tool_output_chars)})
+        toolset = Toolset(
+            catalog=catalog,
+            caller=router,
+            all_tools=tuple(sorted([*mcp_tools, PYTHON_EXECUTE, VIEW_OVERLONG, CLAIM_DONE])),
+            researcher=tuple(sorted([*(name for name in mcp_tools if catalog[name].read_only), VIEW_OVERLONG])),
+            operator=tuple(sorted([*mcp_tools, PYTHON_EXECUTE, VIEW_OVERLONG])),
+            main_extra=(CLAIM_DONE,),
+            stop_tools=(CLAIM_DONE,),
+            show_call_id=True,
+            max_chars=gym.tool_output_chars,
+            ledger=ledger,
+        )
+        writer.write(
+            {
+                "type": "environment",
+                "kind": "docker",
+                **env.info.as_dict(),
+                "tool_policy_sha256": policy.sha256,
+                "tools": {
+                    "all": len(toolset.all_tools),
+                    "researcher": len(toolset.researcher),
+                    "operator": len(toolset.operator),
+                },
+            }
+        )
+        hooks = LedgerHooks(ledger, writer, price, catalog)
+        agent = build(toolset=toolset, hooks=hooks, ledger=ledger)
+        outcome = await _drive(agent, task.task_text, hooks, config)
+        if outcome["agent_status"] == "cost_ceiling":
+            evaluation = dict(_NOT_GRADED_AT_CEILING)
+        else:
+            evaluation = await env.evaluate()
+        if gym.export_workspace:
+            await env.export_workspace(out_dir / "workspaces" / stem)
+    finally:
+        await env.__aexit__(None, None, None)
+    write_ledger(out_dir / "ledgers" / f"{stem}.json", ledger)
+    # Two tiers (env.contamination): arguments that reach for ground truth, results that contain removed content.
+    found = contamination(ledger, task=task.name, fingerprints=removed_fingerprints(env.sealed_copy))
+    return {
+        **outcome,
+        **evaluation,
+        "claimed_done": env.claimed_done,
+        "sealed": env.info.sealed,
+        "ground_truth_suspects": found["attempted"],
+        "ground_truth_obtained": found["obtained"],
+        "contamination_tier": tier(found),
+        # A20: direct writes to the mock services' data (logged and reported; not a contamination tier).
+        "db_write_attempts": db_writes(ledger),
+        "gym_run_id": env.info.run_id,
+        "timings": {key: round(value, 3) for key, value in env.info.timings.items()},
+    }
 
 
 async def _run_one(
@@ -110,8 +523,11 @@ async def _run_one(
     script: dict[str, Any] | None,
     model_config: Any,
     price: Any,
+    prompt_status: dict[str, object] | None = None,
+    meter: RunMeter | None = None,
 ) -> float:
     _install_trace_processors()
+    meter = meter or RunMeter(config.budget.run_ceiling_usd, basis=config.budget.ceiling_basis)
     spec = arm_spec(arm_name)
     checks, sampler, rate = effective_audit(
         arm_name,
@@ -121,12 +537,21 @@ async def _run_one(
     )
     task_root = resolve_repo_path(config.task_root) if config.task_root else resolve_repo_path("tests/fixtures/gym/tasks/finalpool")
     task = load_task(task_name, task_root)
-    workspace = prepare_workspace(task, out_dir / "workspaces" / f"{task_name}__{arm_name}__{seed}")
     path = run_path(out_dir, task_name, arm_name, model_config.model or model_config.name, seed)
+    stem = f"{task_name}__{arm_name}__{seed}"
     if path.exists() and not has_run_end(path):
-        path.unlink()
-    writer = JsonlWriter(path)
+        _set_aside(path)
+    earlier = previous_attempts(path)
+    writer = JsonlWriter(path, observer=meter.observe)
     token = current_writer.set(writer)
+    pin_guard = PinGuard()
+    pin_token = current_pin_guard.set(pin_guard)
+    meter_token = current_run_meter.set(meter)
+    # Every Runner.run of this run (harness_run_config) enforces limits.context with this trimmer.
+    trimmer_token = current_trimmer.set(ContextTrimmer(config.limits.context))
+    # A22: agent temperature and seed for this run; the judge keeps TEMPERATURE.
+    sampling = AgentSampling(config.sampling.temperature, seed if config.sampling.send_seed else None)
+    sampling_token = current_sampling.set(sampling)
     try:
         prompt_file = prompt_path(config.prompts, arm_name)
         routing = model_config.routing
@@ -143,10 +568,30 @@ async def _run_one(
                 "config_sha256": config.source_sha256,
                 "git_commit": git_commit(),
                 "prompt_sha256": _sha256_file(prompt_file),
+                # Every model-visible text of the prompt set (evcarry.harness.prompt_freeze) and its freeze state.
+                "prompt_manifest_sha256": (prompt_status or {}).get("manifest_sha256"),
+                "prompts_frozen": (prompt_status or {}).get("state"),
                 "task_list_sha256": _sha256_file(resolve_repo_path(config.tasks)),
                 "task_prompt_sha256": task.agent_prompt_sha256,
                 "served_model": served_model,
                 "routing": routing,
+                "environment": config.environment,
+                "judge_model": config.judge_model,
+                # Sent on every agent and judge call of every arm (llm_call/judge_call log what each request carried).
+                "temperature": sampling.temperature,
+                "api_seed": sampling.seed,
+                "judge_temperature": TEMPERATURE,
+                "max_steps": config.limits.max_steps,
+                "subagent_max_turns": subagent_turns(config),
+                "context_tokens": config.limits.context,
+                "run_ceiling_usd": meter.ceiling_usd,
+                "ceiling_basis": meter.basis,
+                "reference_endpoint": price.reference_endpoint,
+                "gym_network_internal": config.gym.network_internal if config.environment == "docker" else None,
+                "gym_hide_task_dir": config.gym.hide_task_dir if config.environment == "docker" else None,
+                "gym_agent_db_readonly": config.gym.agent_db_readonly if config.environment == "docker" else None,
+                # C2 (A19): 1 for a first run; earlier attempts of this run are set aside next to it.
+                "attempt": len(earlier) + 1,
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
         )
@@ -158,17 +603,32 @@ async def _run_one(
                 variant=config.inject.variant,
                 max_per_run=config.inject.max_per_run,
             )
-        async with FakeMcp(workspace) as mcp:
-            ledger = Ledger()
-            hooks = LedgerHooks(ledger, writer, price)
-            agent = build_main_agent(
+        judge = build_judge(config.judge_model, writer=writer)
+
+        def build(*, toolset: Toolset, hooks: LedgerHooks, ledger: Ledger):
+            agent = _build_agent(toolset=toolset, hooks=hooks, ledger=ledger)
+            # run_start's prompt_sha256 is the arm's prompt file; a delegating arm's main agent also gets the
+            # sub-agents' tool list (A6), so the prompt actually sent is hashed here.
+            instructions = agent.instructions if isinstance(agent.instructions, str) else ""
+            writer.write(
+                {
+                    "type": "main_prompt",
+                    "arm": arm_name,
+                    "instructions_sha256": hashlib.sha256(instructions.encode("utf-8")).hexdigest(),
+                    "chars": len(instructions),
+                }
+            )
+            return agent
+
+        def _build_agent(*, toolset: Toolset, hooks: LedgerHooks, ledger: Ledger):
+            return build_main_agent(
                 arm=spec,
                 task=task_name,
                 seed=seed,
                 prompts_dir=config.prompts,
                 model_config=model_config,
                 script=script,
-                caller=mcp,
+                toolset=toolset,
                 hooks=hooks,
                 writer=writer,
                 ledger=ledger,
@@ -176,30 +636,49 @@ async def _run_one(
                 sampler=sampler,
                 rate=rate,
                 injector=injector,
-                max_turns=config.limits.max_steps,
+                subagent_max_turns=subagent_turns(config),
+                judge=judge,
             )
-            await asyncio.wait_for(
-                Runner.run(
-                    agent,
-                    task.task_text,
-                    hooks=hooks,
-                    max_turns=config.limits.max_steps,
-                    run_config=RunConfig(tracing_disabled=True),
-                ),
-                timeout=config.limits.max_seconds,
+
+        runner = _run_gym if config.environment == "docker" else _run_fixture
+        try:
+            outcome = await runner(
+                task=task, out_dir=out_dir, stem=stem, build=build, writer=writer, price=price, config=config
             )
-        evaluation = evaluate_task(task, workspace)
+            # A sub-agent tool or the judge may have caught the mismatch.
+            pin_guard.raise_if_violated()
+        except Exception as exc:
+            # C1 (A19): a provider-route failure anywhere in the run (main agent, sub-agent, judge) ends it
+            # with status infra_error in every arm; the block rule (plan_blocks) re-runs or drops the block.
+            if not is_infrastructure_error(exc):
+                raise
+            outcome = infra_outcome(exc)
+        # A call refused at the experiment cap fails the run without run_end.
+        meter.raise_if_cap_reached()
+        verdict = final_verdict(outcome, ceiling_hit=meter.ceiling_hit)
+        if outcome.get("status") == INFRA_STATUS:
+            verdict.update(passed=None, status=INFRA_STATUS, cost_ceiling=meter.ceiling_hit)
         events = read_events(path)
         input_tokens = 0
         output_tokens = 0
         cost = 0.0
+        reported = 0.0
+        judge_error_cost = 0.0
         for event in events:
-            if event.get("type") != "llm_call":
+            if event.get("type") in _SPEND_EVENTS and isinstance(event.get("provider_reported_cost_usd"), (int, float)):
+                reported += float(event["provider_reported_cost_usd"])
+            if event.get("type") == "llm_error" and event.get("role") == "judge":
+                judge_error_cost += float(event.get("cost_usd") or 0)
+                continue
+            if event.get("type") not in ("llm_call", "llm_error"):
                 continue
             tokens = event.get("tokens") or {}
             input_tokens += int(tokens.get("input_tokens") or 0)
             output_tokens += int(tokens.get("output_tokens") or 0)
             cost += float(event.get("cost_usd") or 0)
+        judge_cost = float(getattr(judge, "cost_usd", 0.0)) + judge_error_cost
+        spend = sum(event_spend(event) for event in events)
+        reference_spend = sum(event_reference_spend(event) for event in events)
         writer.write(
             {
                 "type": "run_end",
@@ -208,24 +687,78 @@ async def _run_one(
                 "arm": arm_name,
                 "model": model_config.model,
                 "seed": seed,
-                "passed": evaluation.get("passed"),
-                "status": evaluation.get("status"),
+                **outcome,
+                **verdict,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "cost_usd": cost,
+                "judge_calls": int(getattr(judge, "calls", 0)),
+                "judge_fallbacks": int(getattr(judge, "fallbacks", 0)),
+                "judge_cost_usd": judge_cost,
+                # What the cap counts for this run (event_spend), and the provider's own bill.
+                "spend_usd": spend,
+                # The same tokens at the price table's reference endpoint (what a reference ceiling counts).
+                "reference_spend_usd": reference_spend,
+                "provider_reported_cost_usd": reported,
+                # C2 (A19): which attempt this is, and how the set-aside earlier attempts ended.
+                "attempt": len(earlier) + 1,
+                "previous_attempts": earlier,
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
         )
-        return cost
+        # run_experiment reads this run_end: an infra_error counts toward INFRA_STOP_AFTER, and an
+        # off-pin reply (error_type ProviderMismatch) stops new runs, as before A19.
+        return spend
+    except Exception as exc:
+        # The run ends without run_end (a restart runs it again); say why in its trace.
+        writer.write({"type": "run_error", "error_type": type(exc).__name__, "error": str(exc)[:2000]})
+        raise
     finally:
+        current_sampling.reset(sampling_token)
+        current_trimmer.reset(trimmer_token)
+        current_run_meter.reset(meter_token)
+        current_pin_guard.reset(pin_token)
         current_writer.reset(token)
         writer.close()
 
 
-def _script_for(arm_name: str, overrides: dict[str, Path] | None, model_kind: str) -> dict[str, Any] | None:
+def final_verdict(outcome: dict[str, Any], *, ceiling_hit: bool = False) -> dict[str, Any]:
+    """``passed`` as the paper counts it, next to the grader's own ``eval_passed``.
+
+    Pre-registered (owner decision 4, 2026-10-24): a run whose tool calls reached for
+    ground truth (``ground_truth_suspects``: removed task files, the gym's git history,
+    or its public repo) is ``contaminated`` and counts as a failure, whatever the
+    grader said. An ungraded run (``passed: null``) stays ungraded. From 2026-10-25 the
+    detector has two tiers (``env.contamination``): ``ground_truth_suspects`` is the
+    attempted tier and ``ground_truth_obtained`` the obtained tier; either makes the run
+    contaminated, and ``contamination_tier`` says which.
+
+    Owner decision 5: a run in which any model call was refused at the per-run cost
+    ceiling has status ``cost_ceiling`` and counts as failed, even if the main agent
+    went on to finish (a sub-agent or judge call was cut short).
+
+    ``status`` agrees with ``passed``: a graded contaminated run has status
+    ``contaminated``, and the grader's own status stays in ``eval_status``. Before
+    2026-10-25 (dev run) ``status`` kept the grader's word, so a contaminated grader
+    pass read ``status: passed`` next to ``passed: false``.
+    """
+    eval_passed = outcome.get("passed")
+    contaminated = bool(outcome.get("ground_truth_suspects")) or bool(outcome.get("ground_truth_obtained"))
+    passed = False if contaminated and eval_passed is not None else eval_passed
+    verdict: dict[str, Any] = {"eval_passed": eval_passed, "contaminated": contaminated, "passed": passed, "cost_ceiling": ceiling_hit}
+    if "status" in outcome:
+        verdict["eval_status"] = outcome["status"]
+    if contaminated and eval_passed is not None:
+        verdict["status"] = "contaminated"
+    if ceiling_hit:
+        verdict.update(passed=False, status="cost_ceiling")
+    return verdict
+
+
+def _script_for(arm_name: str, overrides: dict[str, Path] | None, model_kind: str, script_dir: str) -> dict[str, Any] | None:
     if model_kind != "scripted":
         return None
-    path = (overrides or {}).get(arm_name) or default_script_path(arm_name)
+    path = (overrides or {}).get(arm_name) or default_script_path(arm_name, script_dir)
     if not path.is_file():
         raise FileNotFoundError(path)
     return load_script_file(path)
@@ -242,34 +775,67 @@ async def run_experiment(
     if dry_run:
         print(dry_run_report(config))
         return []
-    if config.environment == "docker":
-        DockerIsolation().up()
     models = load_models()
     if config.model not in models:
         raise KeyError(f"unknown model {config.model}")
     model_config = models[config.model]
+    check_frozen_inputs(config)
+    billable = model_config.billable or (config.judge_model in models and models[config.judge_model].billable)
+    prompt_status = check_prompt_freeze(config, billable=billable)
     resolve_api_key(model_config)
+    if config.judge_model in models:
+        resolve_api_key(models[config.judge_model])
+    if config.environment == "docker":
+        DockerIsolation(_gym_images(config)).up()
+        if config.gym.network_internal or config.gym.hide_task_dir:
+            from evcarry.env.gym_docker import require_offline_overlay
+
+            require_offline_overlay(_gym_images(config))
     price = model_config.price_table()
+    if config.budget.ceiling_basis == "reference" and price.reference_rates() is None:
+        raise ValueError(f"budget.ceiling_basis is reference, but {model_config.prices} names no reference_endpoint")
+    if config.budget.ceiling_basis == "reference" and config.budget.reserve_billed_per_reference < price.billed_per_reference_bound():
+        # The cap stays hard per call (admit checks it), but a run served mostly from InferenceNet's cache can bill
+        # more than its reserve before its reference spend reaches the ceiling.
+        print(
+            f"note: reserve_billed_per_reference {config.budget.reserve_billed_per_reference} is below the price table's "
+            f"worst component ratio {price.billed_per_reference_bound():.2f}; the pilot's InferenceNet-only token mix was 1.53.",
+            file=sys.stderr,
+        )
+    destination = out_dir or resolve_repo_path(config.out)
+    destination.mkdir(parents=True, exist_ok=True)
     guard = BudgetGuard(
         cap_usd=config.budget.cap_usd,
         schedule=config.budget.schedule,
         price=price,
+        spent_usd=logged_spend(destination),
+        run_ceiling_usd=config.budget.run_ceiling_usd,
+        reserve_billed_per_reference=config.budget.reserve_billed_per_reference,
     )
-    destination = out_dir or resolve_repo_path(config.out)
-    destination.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    pending = []
-    for task_name, arm_name, seed in grid(config):
-        path = run_path(destination, task_name, arm_name, model_config.model or model_config.name, seed)
-        if has_run_end(path):
-            continue
-        pending.append((task_name, arm_name, seed, path))
-    if config.parallel_tasks <= 1 or stop_after is not None:
-        finished = 0
-        for task_name, arm_name, seed, path in pending:
-            guard.check(billable=model_config.billable, now=datetime.now(timezone.utc))
-            script = _script_for(arm_name, script_overrides, model_config.kind)
-            cost = await _run_one(
+    model_name = model_config.model or model_config.name
+    infra_hits: list[Path] = []
+
+    def _pending() -> list[tuple[str, str, int, Path]]:
+        items = []
+        for task_name, arm_name, seed in grid(config):
+            path = run_path(destination, task_name, arm_name, model_name, seed)
+            if has_run_end(path):
+                continue
+            items.append((task_name, arm_name, seed, path))
+        return items
+
+    def _admit() -> RunMeter:
+        """Check the cap and the schedule, then count the new run as in flight (no await in between)."""
+        guard.check(billable=billable, now=datetime.now(timezone.utc))
+        meter = RunMeter(config.budget.run_ceiling_usd, guard if billable else None, basis=config.budget.ceiling_basis)
+        guard.open(meter)
+        return meter
+
+    async def _one(task_name: str, arm_name: str, seed: int, meter: RunMeter, path: Path) -> None:
+        try:
+            script = _script_for(arm_name, script_overrides, model_config.kind, config.script_dir)
+            await _run_one(
                 config=config,
                 task_name=task_name,
                 arm_name=arm_name,
@@ -278,34 +844,106 @@ async def run_experiment(
                 script=script,
                 model_config=model_config,
                 price=price,
+                prompt_status=prompt_status,
+                meter=meter,
             )
-            guard.add(cost)
-            written.append(path)
-            finished += 1
-            if stop_after is not None and finished >= stop_after:
-                break
-    else:
-        semaphore = asyncio.Semaphore(config.parallel_tasks)
+        finally:
+            # Finished, failed or aborted: what the run spent stays counted.
+            guard.close(meter)
+        end = _last_run_end(path)
+        if end is not None and end.get("status") == INFRA_STATUS:
+            infra_hits.append(path)
+            if end.get("error_type") == "ProviderMismatch":
+                # An off-pin reply is a route problem that would repeat on every run: stop new runs.
+                raise ProviderMismatch(str(end.get("error") or "provider pin broken"))
 
-        async def _bounded(item: tuple[str, str, int, Path]) -> Path:
+    def _infra_stop() -> bool:
+        return len(infra_hits) >= INFRA_STOP_AFTER
+
+    async def _pass(pending: list[tuple[str, str, int, Path]]) -> list[Path]:
+        done: list[Path] = []
+        if config.parallel_tasks <= 1 or stop_after is not None:
+            for task_name, arm_name, seed, path in pending:
+                if _infra_stop():
+                    break
+                await _one(task_name, arm_name, seed, _admit(), path)
+                done.append(path)
+                if stop_after is not None and len(written) + len(done) >= stop_after:
+                    break
+            return done
+        semaphore = asyncio.Semaphore(config.parallel_tasks)
+        refusals: list[BudgetError] = []
+        failures: list[Exception] = []
+        run_ended = asyncio.Condition()
+
+        async def _bounded(item: tuple[str, str, int, Path]) -> Path | None:
             task_name, arm_name, seed, path = item
             async with semaphore:
-                guard.check(billable=model_config.billable, now=datetime.now(timezone.utc))
-                script = _script_for(arm_name, script_overrides, model_config.kind)
-                cost = await _run_one(
-                    config=config,
-                    task_name=task_name,
-                    arm_name=arm_name,
-                    seed=seed,
-                    out_dir=destination,
-                    script=script,
-                    model_config=model_config,
-                    price=price,
-                )
-                guard.add(cost)
+                while True:
+                    if refusals or failures or _infra_stop():
+                        return None
+                    try:
+                        meter = _admit()
+                        break
+                    except SpendCapExceeded as exc:
+                        if guard.live and not guard.cap_reached():
+                            # Only the reserves of runs in flight stand in the way: wait for one to end
+                            # (its unspent reserve is released), then check again, in grid order.
+                            async with run_ended:
+                                await run_ended.wait()
+                            continue
+                        refusals.append(exc)
+                        return None
+                    except BudgetError as exc:
+                        # Start nothing new; runs already going (and paid for) finish.
+                        refusals.append(exc)
+                        return None
+                try:
+                    await _one(task_name, arm_name, seed, meter, path)
+                except Exception as exc:  # noqa: BLE001 - re-raised once the runs in flight are done
+                    # A failed run (harness bug, an off-pin reply, the experiment cap) stops new runs, but the
+                    # runs already going were paid for and finish. The failed run has no run_end, so a
+                    # restart runs its block again (A19); its spend is counted from its trace.
+                    failures.append(exc)
+                    return None
+                finally:
+                    async with run_ended:
+                        run_ended.notify_all()
                 return path
 
-        written = list(await asyncio.gather(*[_bounded(item) for item in pending]))
+        tasks = [asyncio.create_task(_bounded(item)) for item in pending]
+        try:
+            results = await asyncio.gather(*tasks)
+        except BaseException:
+            # Interrupted (Ctrl-C): stop the others and let their environments tear down before re-raising.
+            for item in tasks:
+                item.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        done = [path for path in results if path is not None]
+        if failures or refusals:
+            written.extend(done)
+            write_index(destination)
+        if failures:
+            raise failures[0]
+        if refusals:
+            raise refusals[0]
+        return done
+
+    # A19: hit blocks from earlier invocations are re-run or dropped first; after each pass, blocks that an
+    # infrastructure error hit in this pass are planned again (bounded by max_block_attempts).
+    for _ in range(config.max_block_attempts + 1):
+        plan_blocks(config, destination, model_name)
+        pending = _pending()
+        if not pending or _infra_stop() or (stop_after is not None and len(written) >= stop_after):
+            break
+        written.extend(await _pass(pending))
+    if _infra_stop():
+        write_index(destination)
+        raise InfrastructureError(
+            f"{len(infra_hits)} runs ended with infrastructure errors in this invocation; new runs stopped "
+            f"(INFRA_STOP_AFTER={INFRA_STOP_AFTER}). Their blocks run again on the next invocation."
+        )
     if written or any(destination.glob("*.jsonl")):
         write_index(destination)
     return written

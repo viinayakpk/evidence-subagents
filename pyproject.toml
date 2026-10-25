@@ -36,10 +36,22 @@ requires = ["uv_build>=0.13.5,<0.14"]
 build-backend = "uv_build"
 
 [tool.pytest.ini_options]
+# Load only the plugins this suite uses. A sourced ROS setup puts its pytest11
+# entry points (launch_testing, ament_*) on PYTHONPATH, and autoloading them
+# into this venv fails at import.
+addopts = "--disable-plugin-autoload -p pytest_asyncio.plugin"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "live_provider: calls a real OpenAI-compatible endpoint (opt-in)",
+    "docker_gym: needs Docker and the evcarry gym images; skipped otherwise",
+]
+
+[dependency-groups]
+# uv syncs this group on `uv run`, so `uv run pytest` works without extras.
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
 ]
 
 [tool.uv]
