@@ -54,3 +54,24 @@ At the dev run's per-run means (sa 0.024, vanilla 0.014, self_verify 0.014, evid
 
 - **The first A14 detector draft over-flagged.** It counted the task database's name `toolathlon_gym` (in every psycopg2 connection) as a benchmark name next to an `information_schema` query. Offline over the pilot it moved 9 runs from none to attempted and would have voided 5 grader passes. Corrected before commit (7f2b61e): toolathlon is not a database search term, and `toolathlon_gym`, `toolathlon_pg` and the user `eigent` are not benchmark lookups; tests cover these negatives. With the corrected detector no pilot run changes tier (25 none, 10 attempted, 0 obtained before and after), and the dev run's flagged evidence run goes from 4 to 10 flagged calls.
 - **The pilot graded sf-hr-compensation-pdf-notion without its PDF.** Its grader imports PyPDF2, which the grading Python lacks; it catches the ImportError, prints `[WARN] PDF content extraction error: No module named 'PyPDF2'`, skips the PDF content check, and still passed vanilla_mad and self_verify. This is a pilot10 task, so the headline is not affected, but its pilot results must be reported as graded without the PDF check. A13's import rule flags it with three other pool tasks (`docs/TASK_RULES.md` section 4).
+
+## Dev run v2 (runs/dev_verify_v2, 2026-10-25 08:39-09:16 CET, $0.4950 billed, $0.4221 reference)
+
+Tasks after A13: train-sf-sales-trip-excel-word-email and gcal-snowflake-deadline-tracker; code at bc25dcd (A14 detector, prefix, backslash and status fixes).
+
+| task | arm | grader | passed | billed $ | reference $ | turns (main/researcher/operator) |
+| --- | --- | --- | --- | --- | --- | --- |
+| sales-trip | sa | 40/45 | no | 0.0120 | 0.0120 | 29 |
+| sales-trip | vanilla_mad | 40/45 | no | 0.0210 | 0.0205 | 7/32/12 |
+| sales-trip | self_verify | 45/45 | yes | 0.0168 | 0.0168 | 4/24/21 |
+| sales-trip | evidence_risk | 40/45 | no | 0.0780 | 0.0666 | 5/29/19 |
+| gcal-snowflake | sa | 49/49 | yes | 0.0538 | 0.0304 | 66 |
+| gcal-snowflake | vanilla_mad | pass | yes | 0.0978 | 0.0966 | 6/77/46 |
+| gcal-snowflake | self_verify | 49/49 | yes | 0.1283 | 0.0982 | 9/35/59 |
+| gcal-snowflake | evidence_risk | pass | yes | 0.0872 | 0.0809 | 6/49/50 |
+
+- The three sales-trip failures are the same model error: Customer_Priority ranks 3-5 wrong (Harper, Noah Jones, Emma Miller for Isabella, Harper, Mason).
+- No retries, no provider-check failures, no env errors; network_internal and a complete hide in every environment event; every grader ran after restore.
+- No run hit the $0.17 reference ceiling (largest 0.0982, gcal self_verify). Largest call 122,730 tokens. No contamination flag under A14 (0 flagged calls).
+- Evidence arm: 7 re-delegations in 2 runs, all genuine (a span not in the cited result; overclaims the judge rejected; one claim withdrawn on re-check). partial_accept fired twice (sales-trip r2, r6). skipped_l3 used. Every cited id was exact, so the prefix and backslash fixes were not exercised live. gcal evidence created the Notion page "SLA Breach Dashboard - March 2026" twice inside one operator session (not after a re-delegation); the grader passed.
+- gcal mocks: calendar (5 events), Notion (post, patch, block children, delete) and email all returned normally; the only tool errors were the model's own SQL column-case mistakes and python tracebacks.
