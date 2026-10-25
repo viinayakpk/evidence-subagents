@@ -62,20 +62,20 @@ modelled as copies with probability 0.8; at T > 0, with probability 0.3.
 | (iii) | (i), evidence without L3 | 480 | 28.9 | 57.0 | measured only | same as (i) |
 | (iv) | 4 arms × 3 seeds, T > 0 | 720 | 44.6 | 88.2 | barely, measured only | 0.49 / 0.77 / 0.94 |
 | (iv′) | 4 arms × 2 seeds, T > 0 | 480 | 29.8 | 58.8 | measured only | 0.42 / 0.69 / 0.90 |
-| (v) | (i) with the qwen judge | 480 | 29.0 | 57.5 | measured only | same as (i) |
+| (v) | (i) with the qwen judge | 480 | 29.0 | 57.4 | measured only | same as (i) |
 | (vi-a) | drop self_verify: sa, vanilla, evidence, budget_matched × 2 seeds, T > 0 | 480 | 31.0 | 57.0 | measured only | 0.42 / 0.69 / 0.90 |
 | (vi-b) | fewer tasks: 4 arms × 40 tasks × 3 seeds, T > 0 | 480 | 29.8 | 58.8 | measured only | 0.36 / 0.59 / 0.84 |
 | **R** | **sa × 1 seed; vanilla, evidence, budget_matched × 2 seeds, T > 0** | 420 | **29.0** | **54.2** | yes at measured; seed 1 alone always fits ($15.5 / $28.5) | **0.42 / 0.69 / 0.90** (seed 1 only: 0.29 / 0.53 / 0.77) |
 
 What the table shows:
 - Dropping self_verify does not raise the power of the primary test, because power depends only on the
-  pair being compared. It frees $4.4–10 for the budget-matched control.
+  pair being compared. It frees $4.4 per seed at measured cost ($10 at projected cost) for the budget-matched control.
 - Fewer tasks with more seeds loses power: 40 × 3 gives 0.59 at +15 pp, against 0.69 for 60 × 2.
   Tasks are the independent unit, so keep all 60.
 - At T = 0 a second seed adds little (0.53 → 0.59 at +15 pp). At T > 0 it adds more (0.69).
   T > 0 needs an amendment and makes runs less reproducible.
 - Dropping L3 saves less than $1 and loses the only check on derived and multi-word values. Offline,
-  70–99% of the injected faults that L0–L2 missed had a value that only L3 can judge.
+  93–100% of the injected faults that L0–L2 missed had a value that only L3 can judge.
 - Flips (H1) stay underpowered in every design (≤ 0.56). They are descriptive under A15.
 
 ## 4. Recommendation: design R
